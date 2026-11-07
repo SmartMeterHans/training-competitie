@@ -141,7 +141,7 @@ code{font-size:.85em;background:var(--surface2);padding:1px 4px;border-radius:4p
 <script>
 (function(){
 "use strict";
-const RULES={vrij:"Vrij (koppels vrij)",laag2:"Laagste twee niet in duo 3",auto:"Automatisch op handicap"};
+const RULES={vrij:"Vrij (koppels en volgorde vrij)",laag2:"Laagste twee niet in duo 3",auto:"Automatisch op handicap"};
 const FINALS={beide:"Grote finale en troostfinale",groot:"Alleen grote finale",geen:"Geen finales"};
 const MAXT=10, MAXP=8;
 const BASETABS=[["uitslagen","Uitslagen"],["opstelling","Opstelling"],["stand","Stand"],["startlijst","Startlijst"],["instellingen","Instellingen"]];
@@ -350,13 +350,13 @@ function lineup(t,s){
     const srt=playing.slice().sort(byH); pairs=[[srt[0],srt[1],"1"],[srt[2],srt[3],"2"],[srt[4],srt[5],"3"]];
   } else {
     const g={A:[],B:[],C:[]};
-    for(const p of playing){const k=assign[p.id]; if(!g[k]) return Object.assign(res,{status:"fout",msg:"Kies voor elke speler A, B of C"}); g[k].push(p);}
+    for(const p of playing){const k=assign[p.id]; if(!g[k]) return Object.assign(res,{status:"fout",msg:rule==="vrij"?"Kies voor elke speler duo 1, 2 of 3":"Kies voor elke speler A, B of C"}); g[k].push(p);}
     if(playing.length!==6||g.A.length!==2||g.B.length!==2||g.C.length!==2)
-      return Object.assign(res,{status:"fout",msg:"Er moeten 3 koppels van 2 spelers zijn (A, B en C)"});
+      return Object.assign(res,{status:"fout",msg:rule==="vrij"?"Elk duo (1, 2 en 3) moet precies 2 spelers hebben":"Er moeten 3 koppels van 2 spelers zijn (A, B en C)"});
     pairs=[[...g.A,"A"],[...g.B,"B"],[...g.C,"C"]];
   }
   res.duos=pairs.map(([a,b,k])=>{const pl=[a,b].sort(byH);return {players:pl,sum:Math.round((hc(a)+hc(b))*10)/10,key:k};})
-    .sort((x,y)=>x.sum-y.sum||String(x.key).localeCompare(String(y.key)));
+    .sort(rule==="vrij"?(x,y)=>String(x.key).localeCompare(String(y.key)):(x,y)=>x.sum-y.sum||String(x.key).localeCompare(String(y.key)));
   res.status="ok"; res.msg="OK";
   if(rule==="laag2"){
     const low=playing.slice().sort(byH).slice(0,2).map(p=>p.id);
@@ -492,14 +492,14 @@ function vOpstelling(){
   h+=`<div class="chips">${cfg().teams.map((_,i)=>`<button class="chip" data-team="${i+1}" aria-pressed="${t===i+1}">${esc(tname(i+1))}</button>`).join("")}</div>`;
   h+=`<div class="chips">${ss.map(k=>`<button class="chip" data-round="${k}" aria-pressed="${s===k}">${esc(sessLabel(k))}</button>`).join("")}</div>`;
   if(PLAN.byes[s]===t) return h+`<div class="card empty">${esc(tname(t))} is in ${esc(sessLabel(s))} vrij.</div>`;
-  h+=`<p class="note">Regel voor ${esc(tname(t))}: <b>${RULES[rule]}</b>. ${rule==="auto"?"Kies wie er speelt; de koppels worden op handicap gevormd (1+2, 3+4, 5+6).":"De letter bepaalt wie samen speelt. Het duonummer volgt uit de gezamenlijke handicap, laag naar hoog."} Wijzig de regel bij Instellingen.</p>`;
+  h+=`<p class="note">Regel voor ${esc(tname(t))}: <b>${RULES[rule]}</b>. ${rule==="auto"?"Kies wie er speelt; de koppels worden op handicap gevormd (1+2, 3+4, 5+6).":rule==="vrij"?"Kies per speler het duo (1, 2 of 3). Twee spelers per duo. Duo 1 speelt tegen duo 1 van de tegenstander, enzovoort.":"De letter bepaalt wie samen speelt. Het duonummer volgt uit de gezamenlijke handicap, laag naar hoog."} Wijzig de regel bij Instellingen.</p>`;
   if(!roster.length) return h+`<div class="card empty">Nog geen spelers voor ${esc(tname(t))}. Voeg ze toe bij Instellingen.</div>`;
   const key=`t${t}r${s}`, assign=(S.lineups[key]||{}).assign||{}, lu=lineup(t,s), dis=!canWrite?"disabled":"";
   const duoOf={}; if(lu.status!=="leeg") lu.duos.forEach((d,i)=>d.players.forEach(p=>duoOf[p.id]=i+1));
   h+=`<section class="card">`;
   for(const p of roster){
     const v=assign[p.id]||"";
-    const opts=rule==="auto"?[["","Speelt niet"],["X","Speelt"]]:[["","–"],["A","A"],["B","B"],["C","C"]];
+    const opts=rule==="auto"?[["","Speelt niet"],["X","Speelt"]]:rule==="vrij"?[["","–"],["A","1"],["B","2"],["C","3"]]:[["","–"],["A","A"],["B","B"],["C","C"]];
     h+=`<div class="pl"><div class="nm">${esc(p.name)||"<i>naamloos</i>"} <small>hcp ${p.hcp===""||p.hcp==null?"?":nl(p.hcp)}${duoOf[p.id]&&lu.status!=="leeg"?" · duo "+duoOf[p.id]:""}</small></div>
       <div class="seg${rule==="auto"?" wide":""}">${opts.map(([k,l])=>`<button data-assign="${p.id}|${k}" aria-pressed="${(rule==="auto"?(v?"X":""):v)===k}" ${dis}>${l}</button>`).join("")}</div></div>`;
   }
@@ -599,7 +599,7 @@ function vInstellingen(){
   h+=`<h2>Teams en opstellingsregel</h2><section class="card"><div class="form">`;
   c.teams.forEach((tm,i)=>{h+=`<div class="row"><label class="f">Team ${i+1}<input type="text" id="t-name${i}" data-tname="${i}" value="${esc(tm.name)}" ${dis}></label>
     <label class="f">Opstellingsregel<select id="t-rule${i}" data-trule="${i}" ${dis}>${Object.entries(RULES).map(([k,l])=>`<option value="${k}" ${tm.rule===k?"selected":""}>${l}</option>`).join("")}</select></label></div>`;});
-  h+=`<p class="note" style="margin:0">Vrij: koppels vrij (27/36 holes). Laagste twee niet in duo 3: regel uit de 18-holes competitie. Automatisch: spelers op handicap, 1+2, 3+4, 5+6.</p>
+  h+=`<p class="note" style="margin:0">Vrij: koppels en volgorde vrij, je kiest zelf wie duo 1, 2 en 3 is. Laagste twee niet in duo 3: regel uit de 18-holes competitie. Automatisch: spelers op handicap, 1+2, 3+4, 5+6.</p>
     <div class="actions" style="padding:0"><button class="btn ghost" data-addteam="1" ${N>=MAXT||locked?"disabled":dis}>Team toevoegen</button><button class="btn ghost" data-delteam="1" ${N<=2||locked?"disabled":dis}>Laatste team verwijderen</button></div>
     ${locked?`<p class="note" style="margin:0">Teams toevoegen of verwijderen kan alleen zolang er nog geen uitslagen zijn, omdat het speelschema dan verandert.</p>`:""}</div></section>`;
   h+=`<h2>Speelschema</h2><p class="note">De tee times zijn een voorstel; pas ze hier aan.</p><section class="card tbl-wrap"><table><thead><tr><th>Wedstrijd</th><th>Ronde</th><th>Teams</th><th>Start duo 1</th><th>Tee</th></tr></thead><tbody>`;
