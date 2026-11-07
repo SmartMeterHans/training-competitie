@@ -4,5 +4,5 @@
 // Deze waarden zijn bedoeld om openbaar te zijn; de gegevens worden beschermd door de toegangscodes.
 window.TC_CONFIG = {
   supabaseUrl: "https://dzcjvyaokxclnjntorvx.supabase.co",
-  supabaseAnonKey: "JOUW-ANON-PUBLIC-KEY"
+  supabaseAnonKey: "sb_publishable_q4802UkSDvORMR8x5b_h9w_LdPG41BK"
 };
