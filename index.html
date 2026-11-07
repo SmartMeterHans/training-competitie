@@ -592,7 +592,9 @@ function vBeheer(){
     for(const c of comps){
       h+=`<tr><td><b>${esc(c.name)}</b>${c.id===compId?' <span class="pill ok">open</span>':""}<br><span class="cap">${esc(link(c.id))}</span></td><td class="num">${c.teams}</td>
         <td>${c.hasEdit?"ingesteld":'<span class="pill bad">ontbreekt</span>'}</td><td>${c.hasView?"ingesteld":'<span class="cap">geen: iedereen met de link kijkt mee</span>'}</td>
-        <td style="white-space:nowrap">${c.id===compId?"":`<button class="linkbtn" data-open="${esc(c.id)}">openen</button> · `}<button class="linkbtn" data-copy="${esc(c.id)}">link kopiëren</button> · <button class="linkbtn" data-codes="${esc(c.id)}">codes wijzigen</button> · <button class="linkbtn" data-delc="${esc(c.id)}">verwijderen</button></td></tr>`;
+        <td style="white-space:nowrap">${c.id===compId?"":`<button class="linkbtn" data-open="${esc(c.id)}">openen</button> · `}<button class="linkbtn" data-copy="${esc(c.id)}">link kopiëren</button> · <button class="linkbtn" data-rename="${esc(c.id)}">naam wijzigen</button> · <button class="linkbtn" data-codes="${esc(c.id)}">codes wijzigen</button> · <button class="linkbtn" data-delc="${esc(c.id)}">verwijderen</button></td></tr>`;
+      if(ui.renFor===c.id) h+=`<tr><td colspan="5"><div class="form" style="padding:4px 0"><label class="f">Nieuwe naam<input type="text" data-rn="1" value="${esc(ui.rn)}" autocomplete="off"></label>
+        <div class="actions" style="padding:0"><button class="btn" data-rnsave="${esc(c.id)}">Naam opslaan</button><button class="btn ghost" data-rnno="1">Annuleren</button></div></div></td></tr>`;
       if(ui.codesFor===c.id) h+=`<tr><td colspan="5"><div class="form" style="padding:4px 0"><div class="row">
         <label class="f">Nieuwe invoercode (minstens 8 tekens)<input type="text" data-cc="edit" value="${esc(ui.cc.edit)}" autocomplete="off" spellcheck="false"></label>
         <label class="f">Nieuwe kijkcode (leeg = iedereen met de link kijkt mee)<input type="text" data-cc="view" value="${esc(ui.cc.view)}" autocomplete="off" spellcheck="false"></label></div>
@@ -688,6 +690,7 @@ document.addEventListener("input",e=>{
   const el=e.target,d=el.dataset;
   if(d.nc){ui.nc[d.nc]=el.value; if(d.nc==="text"){const p=$("#nc-prev");if(p)p.innerHTML=ncPreview();} if(ui.ncErr){ui.ncErr=ncError();const e2=$("#nc-err");if(e2)e2.textContent=ui.ncErr;} return;}
   if(d.cc){ui.cc[d.cc]=el.value;return;}
+  if(d.rn){ui.rn=el.value;return;}
   if(d.paste&&ui.paste){ui.paste.text=el.value;const p=$("#paste-prev");if(p)p.innerHTML=pastePreview();}
 });
 document.addEventListener("click",async e=>{
@@ -710,12 +713,23 @@ document.addEventListener("click",async e=>{
     if(d.open){ui.tab="uitslagen";switchComp(d.open);return;}
     if(d.copy){const url=location.origin+location.pathname+"?c="+encodeURIComponent(d.copy);
       try{await navigator.clipboard.writeText(url);toast("Link gekopieerd.");}catch(_){toast(url);}return;}
-    if(d.codes){ui.codesFor=d.codes;ui.cc={edit:"",view:""};ui.delFor=null;render();return;}
+    if(d.codes){ui.codesFor=d.codes;ui.cc={edit:"",view:""};ui.delFor=null;ui.renFor=null;render();return;}
+    if(d.rename){ui.renFor=d.rename;ui.rn=((comps.find(x=>x.id===d.rename)||{}).name)||"";ui.codesFor=null;ui.delFor=null;render();
+      setTimeout(()=>{const el=document.querySelector("[data-rn]");if(el){el.focus();el.select();}},0);return;}
+    if(d.rnno){ui.renFor=null;render();return;}
+    if(d.rnsave){const id=d.rnsave,nm=String(ui.rn||"").trim();if(!nm){toast("Vul een naam in.");return;}
+      try{let c;
+        if(id===compId&&S.cfg){c=normCfg(S.cfg);}
+        else{const st=await rpc("tc_state",{p_comp:id,p_code:store.admin,p_since:-1});c=normCfg((st.docs||{})["config/main"]);}
+        c.name=nm;await rpc("tc_put",{p_comp:id,p_code:store.admin,p_path:"config/main",p_data:c});
+        if(id===compId)setCfg(c);
+        ui.renFor=null;await loadList();render();toast("Naam gewijzigd in "+nm+".");}
+      catch(err){toast(codeErr(err));}return;}
     if(d.ccno){ui.codesFor=null;ui.cc={edit:"",view:""};render();return;}
     if(d.ccsave){try{await rpc("tc_admin",{p_code:store.admin,p_action:"codes",p_args:{comp:d.ccsave,edit:ui.cc.edit.trim(),view:ui.cc.view.trim()}});
         ui.codesFor=null;ui.cc={edit:"",view:""};await loadList();if(d.ccsave===compId){delete store.edit[compId];delete store.view[compId];persist();version=-1;poll();}render();toast("Codes opgeslagen.");}
       catch(err){toast(codeErr(err));}return;}
-    if(d.delc){ui.delFor=d.delc;ui.codesFor=null;render();return;}
+    if(d.delc){ui.delFor=d.delc;ui.codesFor=null;ui.renFor=null;render();return;}
     if(d.delcno){ui.delFor=null;render();return;}
     if(d.delcok){try{await rpc("tc_admin",{p_code:store.admin,p_action:"delete",p_args:{comp:d.delcok}});ui.delFor=null;delete store.edit[d.delcok];delete store.view[d.delcok];persist();
         await loadList();toast("Competitie verwijderd.");if(d.delcok===compId){switchComp(comps.length?comps[0].id:null);ui.tab="beheer";render();}else render();}
@@ -776,7 +790,7 @@ async function createComp(){
 document.addEventListener("change",e=>{
   const el=e.target, d=el.dataset;
   if(el.id==="compsel"){ui.paste=null;switchComp(el.value);return;}
-  if(d.nc||d.cc||d.paste) return;
+  if(d.nc||d.cc||d.paste||d.rn) return;
   if(el.id==="imp-file"){const f=el.files&&el.files[0]; if(!f) return; f.text().then(t=>{let j;try{j=JSON.parse(t);}catch(_){toast("Dit is geen geldig exportbestand.");return;}
     const docs=j&&j.docs?j.docs:j; if(!docs||typeof docs!=="object"||!docs["config/main"]){toast("Dit is geen exportbestand van de Training Competitie.");return;}
     ui.importDocs=docs;ui.importName=f.name;render();});el.value="";return;}
