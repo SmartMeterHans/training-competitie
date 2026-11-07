@@ -119,6 +119,10 @@ textarea{width:100%;min-width:0;padding:8px 10px;border:1px solid var(--line);bo
 .pv{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--surface2);font-size:.88rem;display:grid;gap:2px}
 .pv b{font-family:var(--f-display)}
 .note.warn{color:var(--bad)}
+.sbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;margin-bottom:12px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface);font-size:.92rem}
+.sbar span{display:inline-flex;flex-wrap:wrap;align-items:center;gap:8px}
+.sbar.bezig{border-color:var(--gold);background:var(--gold-soft)}
+.sbar.klaar{border-color:var(--good);background:var(--green-soft)}
 code{font-size:.85em;background:var(--surface2);padding:1px 4px;border-radius:4px}
 </style>
 </head>
@@ -177,7 +181,7 @@ function normCfg(raw){
     else c.sessions=[];
   }
   delete c.dag1; delete c.dag2;
-  for(let i=0;i<P.nSess;i++){const s=c.sessions[i]||{}; c.sessions[i]={label:s.label||(i<P.R?"Ronde "+(i+1):"Finales"),date:s.date||""};}
+  for(let i=0;i<P.nSess;i++){const s=c.sessions[i]||{}; c.sessions[i]={label:s.label||(i<P.R?"Ronde "+(i+1):"Finales"),date:s.date||"",start:s.start||"",end:s.end||""};}
   c.sessions.length=P.nSess;
   if(!Array.isArray(c.sched)) c.sched=[];
   for(const mt of P.matches){if(!c.sched[mt.m-1]||!c.sched[mt.m-1].t){const k=P.matches.filter(x=>x.s===mt.s).indexOf(mt);c.sched[mt.m-1]={t:addMin("09:00",k*30),tee:1};}}
@@ -389,6 +393,12 @@ function winner(mt,stand){const [a,b]=teamsOf(mt,stand);if(!a)return null;const 
 function startTime(mt,d){const sc=cfg().sched[mt.m-1]||{};return addMin(sc.t||"09:00",(d-1)*(num(cfg().interval)||10));}
 const sessLabel=s=>(cfg().sessions[s-1]||{}).label||("Ronde "+s);
 const sessDate=s=>(cfg().sessions[s-1]||{}).date||"";
+const sessStatus=s=>{const x=cfg().sessions[s-1]||{};return x.end?"klaar":x.start?"bezig":"open";};
+const locked=s=>sessStatus(s)==="klaar";
+const today=()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");};
+const hhmm=iso=>{const d=new Date(iso);return isNaN(d)?"":String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");};
+const isoDate=iso=>{const d=new Date(iso);return isNaN(d)?"":d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");};
+function startSess(s){if(!canWrite||!S.cfg)return;const x=S.cfg.sessions[s-1];if(!x||x.start)return;x.start=new Date().toISOString();x.end="";if(!x.date)x.date=today();saveCfg();}
 const finalMatch=f=>PLAN.matches.find(x=>x.fase===f);
 
 /* ---------- weergave ---------- */
@@ -413,19 +423,31 @@ function namesHtml(lu,d){
   if(!lu||lu.duos.length!==3) return `<div class="names"><span class="h">Opstelling nog niet compleet</span></div>`;
   const du=lu.duos[d-1]; return `<div class="names">${du.players.map(p=>esc(p.name)).join("<br>")}<br><span class="h">gez. hcp ${nl(du.sum)}</span></div>`;
 }
-function stepper(m,d,side,val,win){
-  const dis=!canWrite?"disabled":"";
+function stepper(m,d,side,val,win,lock){
+  const dis=!canWrite||lock?"disabled":"";
   return `<div class="step${win?" win":""}" role="group" aria-label="Gewonnen holes">
     <button type="button" data-step="${m}|${d}|${side}|-1" aria-label="Min één" ${dis}>−</button>
     <span class="v" aria-live="polite">${val==null?"·":val}</span>
     <button type="button" data-step="${m}|${d}|${side}|1" aria-label="Plus één" ${dis}>+</button></div>`;
 }
-function sessionState(s){const ms=PLAN.matches.filter(x=>x.s===s);let n=0;for(const mt of ms)n+=tot(mt.m).n;return n===0?"":n===ms.length*3?"done":"busy";}
+function sessionState(s){const st=sessStatus(s);if(st==="klaar")return "done";if(st==="bezig")return "busy";const ms=PLAN.matches.filter(x=>x.s===s);let n=0;for(const mt of ms)n+=tot(mt.m).n;return n===0?"":n===ms.length*3?"done":"busy";}
+function sessBar(s){
+  const st=sessStatus(s), x=cfg().sessions[s-1]||{}, ms=PLAN.matches.filter(m=>m.s===s);
+  let n=0;for(const mt of ms)n+=tot(mt.m).n; const tot3=ms.length*3;
+  let h=`<div class="sbar ${st}">`;
+  if(st==="open") h+=`<span><b>Nog niet gestart.</b> ${n?n+" van "+tot3+" partijen ingevuld.":""}</span>${canWrite?`<button class="btn" data-sstart="${s}">Speeldag starten</button>`:""}`;
+  else if(st==="bezig"){
+    h+=`<span><b>Bezig</b> sinds ${fmtDate(isoDate(x.start))} ${hhmm(x.start)} · ${n} van ${tot3} partijen ingevuld.</span>`;
+    if(canWrite) h+=ui.confirmEnd===s?`<span>${n<tot3?`Nog ${tot3-n} partij(en) zonder uitslag. `:""}Afronden?<button class="btn" data-send="${s}">Ja, afronden</button><button class="btn ghost" data-sendno="1">Nee</button></span>`:`<button class="btn" data-sendask="${s}">Speeldag afronden</button>`;
+  } else h+=`<span><b>Afgerond</b> op ${fmtDate(isoDate(x.end))} ${hhmm(x.end)}. De uitslagen staan vast.</span>${canWrite?`<button class="linkbtn" data-sreopen="${s}">heropenen</button>`:""}`;
+  return h+`</div>`;
+}
 function vUitslagen(){
   const stand=standings(), ss=[];for(let s=1;s<=PLAN.nSess;s++)ss.push(s);
-  if(ui.sess==null||ui.sess>PLAN.nSess){ui.sess=ss.find(s=>sessionState(s)!=="done")||1;}
+  if(ui.sess==null||ui.sess>PLAN.nSess){ui.sess=ss.find(s=>sessStatus(s)==="bezig")||ss.find(s=>sessStatus(s)==="open"&&sessionState(s)!=="done")||ss.find(s=>sessStatus(s)!=="klaar")||1;}
   let h=banner()+`<div class="chips">${ss.map(s=>{const st=sessionState(s);return `<button class="chip" data-sess="${s}" aria-pressed="${ui.sess===s}">${esc(sessLabel(s))}<span class="dot ${st}"></span></button>`;}).join("")}</div>`;
-  const date=fmtDate(sessDate(ui.sess)), bye=PLAN.byes[ui.sess];
+  h+=sessBar(ui.sess);
+  const date=fmtDate(sessDate(ui.sess)), bye=PLAN.byes[ui.sess], lk=locked(ui.sess);
   h+=`<p class="note">Tik op + of − voor het aantal gewonnen holes per duo. Winst 1 punt, gelijk 0,5, verlies 0.${date?" Speeldatum: "+date+".":""}${bye?` <b>${esc(tname(bye))}</b> is deze ronde vrij.`:""}</p><div class="grid2">`;
   for(const mt of PLAN.matches.filter(x=>x.s===ui.sess)){
     const [a,b]=teamsOf(mt,stand), x=tot(mt.m), fin=!!mt.fase;
@@ -436,16 +458,16 @@ function vUitslagen(){
     if(fin&&!a){h+=`<div class="empty">De teams worden bekend zodra alle ${stand.total} poulepartijen zijn ingevuld (${stand.entered} van ${stand.total}).</div></section>`;continue;}
     for(let d=1;d<=3;d++){
       const r=duoRes(mt.m,d);
-      h+=`<div class="duo"><div class="side">${namesHtml(la,d)}${stepper(mt.m,d,"l",r.l,r.done&&r.pl===1)}</div>
-        <div class="mid"><div class="n">Duo ${d}</div><div class="t">${startTime(mt,d)}</div><div class="p">${r.done?nl(r.pl)+" – "+nl(1-r.pl):"&nbsp;"}</div>${(r.l!=null||r.r!=null)&&canWrite&&!offline?`<button class="linkbtn" data-clear="${mt.m}|${d}">wis</button>`:""}</div>
-        <div class="side r">${namesHtml(lb,d)}${stepper(mt.m,d,"r",r.r,r.done&&r.pl===0)}</div></div>`;
+      h+=`<div class="duo"><div class="side">${namesHtml(la,d)}${stepper(mt.m,d,"l",r.l,r.done&&r.pl===1,lk)}</div>
+        <div class="mid"><div class="n">Duo ${d}</div><div class="t">${startTime(mt,d)}</div><div class="p">${r.done?nl(r.pl)+" – "+nl(1-r.pl):"&nbsp;"}</div>${(r.l!=null||r.r!=null)&&canWrite&&!offline&&!lk?`<button class="linkbtn" data-clear="${mt.m}|${d}">wis</button>`:""}</div>
+        <div class="side r">${namesHtml(lb,d)}${stepper(mt.m,d,"r",r.r,r.done&&r.pl===0,lk)}</div></div>`;
     }
     let foot;
     if(x.n===0) foot=`<span class="pill wait">Nog niet begonnen</span>`;
     else if(x.n<3) foot=`<span class="pill gold">Lopend: ${x.n} van 3 duo's binnen</span>`;
     else if(x.pl!==x.pr) foot=`<span class="pill ok">${esc(tname(x.pl>x.pr?a:b))} wint ${nl(Math.max(x.pl,x.pr))} – ${nl(Math.min(x.pl,x.pr))}</span>`;
     else if(!fin) foot=`<span class="pill gold">Gelijk 1,5 – 1,5</span>`;
-    else { const w=(S.results[`m${mt.m}sd`]||{}).w||""; const dis=!canWrite?"disabled":"";
+    else { const w=(S.results[`m${mt.m}sd`]||{}).w||""; const dis=!canWrite||lk?"disabled":"";
       foot=`<span>1,5 – 1,5: winnaar sudden-death</span><span class="seg wide"><button data-sd="${mt.m}|L" aria-pressed="${w==="L"}" ${dis}>${ta}</button><button data-sd="${mt.m}|R" aria-pressed="${w==="R"}" ${dis}>${tb}</button></span>`; }
     h+=`<div class="foot">${foot}<span class="cap">holes ${x.hl} – ${x.hr}</span></div></section>`;
   }
@@ -497,7 +519,7 @@ function vStand(){
   let h=banner()+`<h2>Poulestand</h2><div class="card tbl-wrap"><table><thead><tr><th>#</th><th>Team</th><th class="num">Gesp.</th><th class="num">W</th><th class="num">G</th><th class="num">V</th><th class="num">Punten</th><th class="num">Holes</th><th class="num">Onderl.</th>${f!=="geen"?"<th>Naar</th>":""}</tr></thead><tbody>`;
   for(const r of st.rows) h+=`<tr><td class="rank">${r.rank}</td><td><b>${esc(tname(r.t))}</b></td><td class="num">${r.played}</td><td class="num">${r.W}</td><td class="num">${r.G}</td><td class="num">${r.V}</td><td class="num"><b>${nl(r.pts)}</b></td><td class="num">${r.holes}</td><td class="num">${nl(r.h2h)}</td>${f!=="geen"?`<td>${naar(r)}</td>`:""}</tr>`;
   h+=`</tbody></table></div>`;
-  h+=`<p class="note" style="margin-top:8px">${st.entered===0?"De poulefase is nog niet begonnen.":!st.complete?`Poulefase lopend: ${st.entered} van ${st.total} partijen binnen.`:st.tie?"Volledig gelijke stand. Speel een sudden-death en vul hieronder de plaatsen in.":"Poulestand definitief."} Volgorde: punten, gewonnen holes, onderling resultaat, sudden-death.</p>`;
+  h+=`<p class="note" style="margin-top:8px">${st.entered===0?"De poulefase is nog niet begonnen.":!st.complete?`Poulefase lopend: ${st.entered} van ${st.total} partijen binnen.`:st.tie?"Volledig gelijke stand. Speel een sudden-death en vul hieronder de plaatsen in.":"Poulestand definitief."} Volgorde: punten, gewonnen holes, onderling resultaat, sudden-death. Afgeronde speeldagen: ${cfg().sessions.filter(x=>x.end).length} van ${PLAN.nSess}.</p>`;
   const po=cfg().playoff||{}, dis=!canWrite?"disabled":"";
   if(st.tie||Object.values(po).some(v=>v)){
     const opts=[];for(let n=1;n<=N;n++)opts.push(n);
@@ -533,8 +555,8 @@ function vInstellingen(){
     <label class="f">Interval tussen duo's (min)<input type="number" id="c-int" min="5" max="20" data-cfg="interval" value="${esc(c.interval)}" ${dis}></label>
     <label class="f">Finales<select id="c-fin" data-cfg="finals" ${dis} ${finLocked?"disabled":""}>${Object.entries(FINALS).filter(([k])=>k==="geen"||(k==="groot"&&N>=2)||(k==="beide"&&N>=4)).map(([k,l])=>`<option value="${k}" ${c.finals===k?"selected":""}>${l}</option>`).join("")}</select></label></div>
     <p class="note" style="margin:0">${N} teams: ${PLAN.R} poulerondes${N%2?" (per ronde is één team vrij)":""}${PLAN.fs?", daarna de finales":""}. Elk team speelt één keer tegen elk ander team.</p></div></section>`;
-  h+=`<h2>Speeldagen</h2><p class="note">Geef elke ronde een naam en datum. Rondes met dezelfde datum staan samen op de startlijst.</p><section class="card tbl-wrap"><table><thead><tr><th>Ronde</th><th>Naam</th><th>Datum</th></tr></thead><tbody>`;
-  c.sessions.forEach((s,i)=>{h+=`<tr><td>${i+1}${PLAN.fs===i+1?" (finales)":""}</td><td><input type="text" id="se-l${i}" data-sess-l="${i}" value="${esc(s.label)}" ${dis}></td><td><input type="date" id="se-d${i}" data-sess-d="${i}" value="${esc(s.date)}" ${dis}></td></tr>`;});
+  h+=`<h2>Speeldagen</h2><p class="note">De datum wordt automatisch ingevuld zodra een speeldag wordt gestart (bij Uitslagen). Vooraf invullen mag ook. Rondes met dezelfde datum staan samen op de startlijst.</p><section class="card tbl-wrap"><table><thead><tr><th>Ronde</th><th>Naam</th><th>Datum</th><th>Status</th></tr></thead><tbody>`;
+  c.sessions.forEach((s,i)=>{h+=`<tr><td>${i+1}${PLAN.fs===i+1?" (finales)":""}</td><td><input type="text" id="se-l${i}" data-sess-l="${i}" value="${esc(s.label)}" ${dis}></td><td><input type="date" id="se-d${i}" data-sess-d="${i}" value="${esc(s.date)}" ${dis}></td><td>${{open:'<span class="cap">niet gestart</span>',bezig:'<span class="pill gold">bezig</span>',klaar:'<span class="pill ok">afgerond</span>'}[sessStatus(i+1)]}</td></tr>`;});
   h+=`</tbody></table></section>`;
   h+=`<h2>Teams en opstellingsregel</h2><section class="card"><div class="form">`;
   c.teams.forEach((tm,i)=>{h+=`<div class="row"><label class="f">Team ${i+1}<input type="text" id="t-name${i}" data-tname="${i}" value="${esc(tm.name)}" ${dis}></label>
@@ -746,10 +768,18 @@ document.addEventListener("click",async e=>{
   if(!canWrite) return;
   if(d.impno){ui.importDocs=null;render();return;}
   if(d.impok){const docs=ui.importDocs;ui.importDocs=null;rpc("tc_import",{p_comp:compId,p_code:authCode(),p_docs:docs}).then(()=>{toast("Gegevens teruggezet.");version=-1;poll();}).catch(err=>toast(err&&err.code==="toegang_geweigerd"?"Terugzetten geweigerd: geen invoerrechten.":"Terugzetten mislukt."));render();return;}
-  if(d.step){const [m,du,side,dl]=d.step.split("|");const k=`m${m}d${du}`;const r=Object.assign({},S.results[k]||{});
-    const cur=num(r[side]); let nv=cur==null?(+dl>0?1:0):cur+ +dl; nv=Math.max(0,Math.min(9,nv)); r[side]=nv; S.results[k]=r; saveResult(k); render(); return;}
-  if(d.clear){const [m,du]=d.clear.split("|");const k=`m${m}d${du}`;S.results[k]={};saveResult(k);render();return;}
-  if(d.sd){const [m,w]=d.sd.split("|");const k=`m${m}sd`;const cur=(S.results[k]||{}).w;S.results[k]={w:cur===w?"":w};saveResult(k);render();return;}
+  if(d.step){const [m,du,side,dl]=d.step.split("|");const ms=(PLAN.matches.find(x=>x.m===+m)||{}).s;if(locked(ms))return;const k=`m${m}d${du}`;const r=Object.assign({},S.results[k]||{});
+    const cur=num(r[side]); let nv=cur==null?(+dl>0?1:0):cur+ +dl; nv=Math.max(0,Math.min(9,nv)); r[side]=nv;
+    const oth=side==="l"?"r":"l"; if(num(r[oth])==null) r[oth]=0;
+    S.results[k]=r; saveResult(k); startSess(ms); render(); return;}
+  if(d.sstart){startSess(+d.sstart);render();toast("Speeldag gestart.");return;}
+  if(d.sendask){ui.confirmEnd=+d.sendask;render();return;}
+  if(d.sendno){ui.confirmEnd=null;render();return;}
+  if(d.send){const x=S.cfg.sessions[+d.send-1];if(!x.start){x.start=new Date().toISOString();if(!x.date)x.date=today();}x.end=new Date().toISOString();ui.confirmEnd=null;saveCfg();
+    const nx=PLAN.nSess>=+d.send+1?+d.send+1:null; if(nx) ui.sess=nx; render();toast("Speeldag afgerond."+(nx?" Volgende: "+sessLabel(nx)+".":""));return;}
+  if(d.sreopen){const x=S.cfg.sessions[+d.sreopen-1];x.end="";saveCfg();ui.sess=+d.sreopen;render();toast("Speeldag heropend.");return;}
+  if(d.clear){const [m,du]=d.clear.split("|");if(locked((PLAN.matches.find(x=>x.m===+m)||{}).s))return;const k=`m${m}d${du}`;S.results[k]={};saveResult(k);render();return;}
+  if(d.sd){const [m,w]=d.sd.split("|");if(locked((PLAN.matches.find(x=>x.m===+m)||{}).s))return;const k=`m${m}sd`;const cur=(S.results[k]||{}).w;S.results[k]={w:cur===w?"":w};saveResult(k);render();return;}
   if(d.assign){const [pid,v]=d.assign.split("|");const key=`t${ui.team}r${ui.round}`;const cur=S.lineups[key]||{assign:{}};const as=Object.assign({},cur.assign);
     if(v)as[pid]=v;else delete as[pid];S.lineups[key]={assign:as};saveLineup(ui.team,ui.round);render();return;}
   if(d.add){const t=+d.add;const r=(S.rosters[t]||[]).slice();if(r.length>=MAXP)return;r.push({id:rid(),name:"",hcp:""});S.rosters[t]=r;saveRoster(t);render();
