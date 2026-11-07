@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#0B2135">
-<title>Training Competitie</title>
+<title>Competities</title>
 <style>
 /* Layout: scorebord-app. Navy kop met tabbladen, daaronder kaarten per wedstrijd; telefoon eerst, op breed scherm twee kolommen. */
 :root{
@@ -113,52 +113,174 @@ input[type=text],input[type=number],input[type=date],input[type=time],select{wid
 .toast{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--navy);color:var(--navy-ink);padding:10px 16px;border-radius:8px;font-size:.9rem;max-width:calc(100% - 32px);z-index:10}
 @media (max-width:420px){ .step button{width:34px;height:36px} .mid{min-width:54px} .duo{padding:10px 8px;gap:6px} }
 @media (prefers-reduced-motion:no-preference){ .step button:active{transform:scale(.94)} }
+textarea{width:100%;min-width:0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface2);font:inherit;font-size:.92rem;color:var(--ink);resize:vertical;font-family:ui-monospace,Consolas,monospace}
+.csel{width:auto;max-width:260px;padding:4px 8px;border:1px solid var(--gold);border-radius:999px;background:var(--navy);color:var(--navy-ink);font-weight:700;font-size:.82rem}
+.gridp{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(min(100%,190px),1fr))}
+.pv{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--surface2);font-size:.88rem;display:grid;gap:2px}
+.pv b{font-family:var(--f-display)}
+.note.warn{color:var(--bad)}
+code{font-size:.85em;background:var(--surface2);padding:1px 4px;border-radius:4px}
 </style>
 </head>
 <body>
 <header class="top"><div class="top-in">
-  <div class="brand"><h1 id="title">Training Competitie</h1><span class="brand-r"><span class="sub" id="subtitle">Vier teams · greensome over 9 holes</span><span id="authbtn"></span></span></div>
+  <div class="brand"><h1 id="title">Competities</h1><span class="brand-r"><span class="sub" id="subtitle"></span><select id="compsel" class="csel" aria-label="Kies competitie" hidden></select><span id="authbtn"></span></span></div>
   <nav class="tabs" role="tablist" id="tabs"></nav>
 </div></header>
-<main id="view"><div class="empty">De competitie wordt geladen…</div></main>
+<main id="view"><div class="empty">De competities worden geladen…</div></main>
 <div class="toast" id="toast" hidden></div>
 
 <script src="config.js"></script>
 <script>
 (function(){
 "use strict";
-const SESSIONS=[{s:1,label:"Dag 1 ochtend",dag:1},{s:2,label:"Dag 1 middag",dag:1},{s:3,label:"Dag 2 ochtend",dag:2},{s:4,label:"Finales",dag:2}];
-const MATCHES=[
- {m:1,s:1,L:1,R:4},{m:2,s:1,L:2,R:3},{m:3,s:2,L:1,R:3},{m:4,s:2,L:2,R:4},{m:5,s:3,L:1,R:2},{m:6,s:3,L:3,R:4},
- {m:7,s:4,fase:"Troostfinale",seeds:[3,4]},{m:8,s:4,fase:"Grote finale",seeds:[1,2]}];
 const RULES={vrij:"Vrij (koppels vrij)",laag2:"Laagste twee niet in duo 3",auto:"Automatisch op handicap"};
-const DEFAULT_TIMES=["09:00","09:30","14:00","14:30","09:00","09:30","14:00","14:30"];
-const defCfg=()=>({name:"Training Competitie",baan:"",dag1:"",dag2:"",interval:10,
-  teams:[1,2,3,4].map(t=>({name:"Heren "+t,rule:"vrij"})),sched:DEFAULT_TIMES.map(t=>({t,tee:1})),playoff:{}});
-const TABS=[["uitslagen","Uitslagen"],["opstelling","Opstelling"],["stand","Stand"],["startlijst","Startlijst"],["instellingen","Instellingen"]];
-
-const S={cfg:null,rosters:{},lineups:{},results:{},loaded:{cfg:false,rosters:false,lineups:false,results:false}};
-let db=null, canWrite=false, offline=false;
-const ui={tab:"uitslagen",sess:null,team:1,round:1,confirmDel:null};
-try{const t=localStorage.getItem("tc.tab"); if(t&&TABS.some(x=>x[0]===t)) ui.tab=t;}catch(e){}
-if(location.hash&&TABS.some(x=>x[0]===location.hash.slice(1))) ui.tab=location.hash.slice(1);
+const FINALS={beide:"Grote finale en troostfinale",groot:"Alleen grote finale",geen:"Geen finales"};
+const MAXT=10, MAXP=8;
+const BASETABS=[["uitslagen","Uitslagen"],["opstelling","Opstelling"],["stand","Stand"],["startlijst","Startlijst"],["instellingen","Instellingen"]];
 
 const $=s=>document.querySelector(s);
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const nl=x=>String(x).replace(".",",");
 const num=v=>{if(v===""||v==null)return null; const n=Number(String(v).replace(",","."));return isFinite(n)?n:null;};
-const cfg=()=>S.cfg||defCfg();
-const tname=t=>(cfg().teams[t-1]||{}).name||("Team "+t);
+const rid=()=>Math.random().toString(36).slice(2,9);
 function toast(msg){const el=$("#toast");el.textContent=msg;el.hidden=false;clearTimeout(toast._t);toast._t=setTimeout(()=>el.hidden=true,3500);}
 function addMin(hhmm,min){const [h,m]=String(hhmm||"00:00").split(":").map(Number);const t=(h*60+m+min+1440)%1440;return String(Math.floor(t/60)).padStart(2,"0")+":"+String(t%60).padStart(2,"0");}
 function fmtDate(d){if(!d)return "";const p=d.split("-");return p.length===3?`${+p[2]}-${+p[1]}-${p[0]}`:d;}
 
+/* ---------- speelschema voor N teams ---------- */
+// Halve competitie volgens het rondsysteem (team 1 vast, de rest draait). Bij een oneven aantal is per ronde één team vrij.
+function buildPlan(N,finals){
+  const arr=[];for(let i=1;i<=N;i++)arr.push(i); if(N%2)arr.push(0);
+  const n=arr.length, R=n-1, matches=[], byes={}; let m=0, rot=arr.slice(1);
+  for(let r=0;r<R;r++){
+    const a=[arr[0],...rot];
+    for(let i=0;i<n/2;i++){let x=a[i],y=a[n-1-i]; if(!x||!y){byes[r+1]=x||y;continue;} if(x>y)[x,y]=[y,x]; matches.push({m:++m,s:r+1,L:x,R:y});}
+    rot=[rot[rot.length-1],...rot.slice(0,-1)];
+  }
+  const poule=m; let fs=null;
+  if(finals!=="geen"){fs=R+1;
+    if(finals==="beide") matches.push({m:++m,s:fs,fase:"Troostfinale",seeds:[3,4]});
+    matches.push({m:++m,s:fs,fase:"Grote finale",seeds:[1,2]});}
+  return {N,R,matches,byes,poule,fs,nSess:R+(fs?1:0)};
+}
+function finalsFor(N,f){if(f==="beide"&&N>=4)return f; if(f==="groot"&&N>=2)return f; if(f==="geen")return f; return N>=4?"beide":N===3?"groot":"geen";}
+function normCfg(raw){
+  const c=Object.assign({name:"Competitie",baan:"",interval:10,teams:[],sessions:null,sched:[],playoff:{},finals:null},raw?JSON.parse(JSON.stringify(raw)):{});
+  if(!Array.isArray(c.teams)) c.teams=[];
+  c.teams=c.teams.slice(0,MAXT).map((t,i)=>({name:(t&&t.name)||("Team "+(i+1)),rule:(t&&RULES[t.rule])?t.rule:"vrij"}));
+  while(c.teams.length<2) c.teams.push({name:"Team "+(c.teams.length+1),rule:"vrij"});
+  const N=c.teams.length; c.finals=finalsFor(N,c.finals);
+  const P=buildPlan(N,c.finals);
+  if(!Array.isArray(c.sessions)){
+    if(N===4&&("dag1" in c||"dag2" in c)) c.sessions=[{label:"Dag 1 ochtend",date:c.dag1||""},{label:"Dag 1 middag",date:c.dag1||""},{label:"Dag 2 ochtend",date:c.dag2||""},{label:"Finales",date:c.dag2||""}];
+    else c.sessions=[];
+  }
+  delete c.dag1; delete c.dag2;
+  for(let i=0;i<P.nSess;i++){const s=c.sessions[i]||{}; c.sessions[i]={label:s.label||(i<P.R?"Ronde "+(i+1):"Finales"),date:s.date||""};}
+  c.sessions.length=P.nSess;
+  if(!Array.isArray(c.sched)) c.sched=[];
+  for(const mt of P.matches){if(!c.sched[mt.m-1]||!c.sched[mt.m-1].t){const k=P.matches.filter(x=>x.s===mt.s).indexOf(mt);c.sched[mt.m-1]={t:addMin("09:00",k*30),tee:1};}}
+  c.sched.length=P.matches.length;
+  if(!c.playoff||typeof c.playoff!=="object") c.playoff={};
+  return c;
+}
+
+/* ---------- namen anonimiseren (gebeurt alleen in deze browser) ---------- */
+const TV=new Set(["van","de","der","den","het","ten","ter","te","in","op","uit","'t","t","’t","d'","du","la","le","von","zu","di","da","del","dos","das","el","al","bij","aan","onder","over","vd","v.d.","v/d"]);
+const SUFRE=/\s*(\([^)]*\)|©)\s*$/;
+const baseName=n=>String(n||"").replace(SUFRE,"").trim().toLowerCase();
+const capW=x=>x.charAt(0).toUpperCase()+x.slice(1).toLowerCase();
+function splitName(raw){
+  let s=String(raw||"").replace(/ /g," ").replace(/\s+/g," ").trim(), suffix="";
+  const m=s.match(SUFRE); if(m){suffix=/^\(c\)$/i.test(m[1])?"©":m[1]; s=s.slice(0,m.index).trim();}
+  if(s.includes(",")){const [a,b]=s.split(",").map(x=>x.trim()); if(a&&b) s=b+" "+a;}
+  const p=s.split(" ").filter(Boolean);
+  if(p.length<2) return {fixed:s,suffix};
+  if(p.length===2&&/^\p{Lu}\p{Ll}{0,2}\.$/u.test(p[1])) return {fixed:s,suffix};
+  let j=p.length-2; while(j>=1&&TV.has(p[j].toLowerCase())) j--;
+  const core=p[p.length-1].replace(/^['’]+/,"").replace(/[^\p{L}-]/gu,"");
+  return {given:p.slice(0,j+1).join(" "),core:core||p[p.length-1],suffix};
+}
+// Maakt van volledige namen "Voornaam L."; bij dubbelen meer letters van de achternaam. taken = namen die al bestaan.
+function anonNames(raws,taken){
+  const o=raws.map(splitName), len=o.map(()=>1), tk=new Set([...(taken||[])].map(baseName));
+  const disp=i=>o[i].fixed!=null?o[i].fixed:`${o[i].given} ${capW(o[i].core.slice(0,len[i]))}.`;
+  for(let round=0;round<12;round++){
+    const names=o.map((_,i)=>disp(i).toLowerCase()); let changed=false;
+    const others=i=>[...tk,...names.filter((_,k)=>k!==i)];
+    o.forEach((x,i)=>{if(x.fixed!=null)return; const pre=names[i].slice(0,-1);
+      const dup=others(i).some(nm=>nm===names[i]||(nm.startsWith(pre)&&nm.length>names[i].length&&nm.charAt(pre.length)!==" "));
+      if(dup&&len[i]<Math.min(3,x.core.length-1)){len[i]++;changed=true;}});
+    if(!changed) break;
+  }
+  const out=[], seen=new Set(tk);
+  o.forEach((x,i)=>{let b=disp(i),nm=b,k=2; while(seen.has(nm.toLowerCase())) nm=b+" "+(k++); seen.add(nm.toLowerCase()); out.push(nm+(x.suffix?" "+x.suffix:""));});
+  return out;
+}
+const looksFull=n=>{const x=splitName(n);return x.fixed==null;};
+function toHcp(s){const t=String(s).trim();const plus=t.startsWith("+");const v=num(t.replace("+",""));if(v==null||v>54)return null;return plus?-v:v;}
+// Tekst met teams en spelers lezen. Kopregel: eindigt op ":" of begint met "Team:". Spelerregel: naam, daarna eventueel handicap.
+function parseTeams(text,allowTeams){
+  const teams=[]; let cur=null;
+  for(const raw of String(text||"").split(/\r?\n/)){
+    const t=raw.replace(/ /g," ").trim(); if(!t) continue;
+    let hm=t.match(/^team\s*:\s*(.+)$/i)||(/:\s*$/.test(t)&&!t.includes("\t")?[0,t.replace(/:\s*$/,"")]:null);
+    if(hm){ if(allowTeams){cur={name:hm[1].trim(),players:[]};teams.push(cur);} continue; }
+    let name="",hcp=null,suffix="";
+    const cells=t.includes("\t")?t.split("\t"):t.includes(";")?t.split(";"):null;
+    if(cells){const c=cells.map(x=>x.trim()).filter(Boolean); name=c[0]||""; for(const x of c.slice(1)){if(hcp==null&&/^\+?-?\d{1,2}([.,]\d+)?$/.test(x))hcp=toHcp(x);else if(SUFRE.test(" "+x))suffix=x;}}
+    else{let s=t;for(let k=0;k<3;k++){let m;
+      if((m=s.match(/\s+(\([^)]*\)|©)$/))){suffix=m[1];s=s.slice(0,m.index);}
+      else if(hcp==null&&(m=s.match(/\s+(\+?-?\d{1,2}(?:[.,]\d+)?)$/))){hcp=toHcp(m[1]);s=s.slice(0,m.index);}
+      else break;} name=s.trim();}
+    if(!name) continue;
+    if(!cur){cur={name:"",players:[]};teams.push(cur);}
+    cur.players.push({raw:name+(suffix?" "+suffix:""),hcp});
+  }
+  teams.forEach((t,i)=>{if(!t.name)t.name="Team "+(i+1);});
+  return teams;
+}
+function anonTeams(teams,taken){
+  const flat=[];teams.forEach(t=>t.players.forEach(p=>flat.push(p.raw)));
+  const names=anonNames(flat,taken); let k=0;
+  return teams.map(t=>({name:t.name,players:t.players.map(p=>({name:names[k++],hcp:p.hcp}))}));
+}
+function previewHtml(teams,opts){
+  if(!teams.length) return `<p class="note" style="margin:0">Nog niets ingevuld.</p>`;
+  const warn=[];
+  if(opts.teams){ if(teams.length<2) warn.push("Minimaal 2 teams."); if(teams.length>MAXT) warn.push(`Maximaal ${MAXT} teams (nu ${teams.length}).`); }
+  teams.forEach(t=>{ if(t.players.length>MAXP) warn.push(`${t.name}: maximaal ${MAXP} spelers, de rest wordt niet overgenomen.`);
+    const nh=t.players.filter(p=>p.hcp==null).length; if(nh) warn.push(`${t.name}: ${nh} speler(s) zonder handicap.`);});
+  let h=`<div class="gridp">`+teams.map(t=>`<div class="pv"><b>${esc(t.name)}</b>${t.players.length?"":"<div class='cap'>geen spelers</div>"}${t.players.slice(0,MAXP).map(p=>`<div>${esc(p.name)} <span class="cap">${p.hcp==null?"hcp ?":"hcp "+esc(nl(p.hcp))}</span></div>`).join("")}</div>`).join("")+`</div>`;
+  if(warn.length) h+=`<p class="note warn">${warn.map(esc).join("<br>")}</p>`;
+  return h+`<p class="note" style="margin:6px 0 0">Zo komen de namen in de app. Volledige namen worden niet opgeslagen.</p>`;
+}
+
+/* ---------- toestand ---------- */
+const S={cfg:null,rosters:{},lineups:{},results:{},loaded:false};
+let PLAN=buildPlan(4,"beide");
+let canWrite=false, offline=false, isAdmin=false, adminSet=true, comps=[], compId=null, listLoaded=false, listErr=false;
+const ui={tab:"uitslagen",sess:null,team:1,round:1,confirmDel:null,nc:{name:"",text:"",edit:"",view:""},cc:{edit:"",view:""},codesFor:null,delFor:null,paste:null,busy:false};
+const tabs=()=>isAdmin?BASETABS.concat([["beheer","Beheer"]]):BASETABS;
+try{const t=localStorage.getItem("tc.tab"); if(t) ui.tab=t;}catch(e){}
+if(location.hash) ui.tab=location.hash.slice(1);
+
+const cfg=()=>S.cfg||normCfg(null);
+const NT=()=>cfg().teams.length;
+const tname=t=>(cfg().teams[t-1]||{}).name||("Team "+t);
+function setCfg(c){S.cfg=normCfg(c);PLAN=buildPlan(S.cfg.teams.length,S.cfg.finals);}
+
 /* ---------- opslag (Supabase) ---------- */
 const CONF=window.TC_CONFIG||{};
 const configured=!!(CONF.supabaseUrl&&CONF.supabaseAnonKey&&!/JOUW|xxxx/i.test(CONF.supabaseUrl+CONF.supabaseAnonKey));
+const store={admin:"",edit:{},view:{}};
+try{const j=JSON.parse(localStorage.getItem("tc.store")||"null"); if(j){store.admin=j.admin||"";store.edit=j.edit||{};store.view=j.view||{};}
+  else{const old=localStorage.getItem("tc.code"); if(old) store.view.training=old;}}catch(e){}
+function persist(){try{localStorage.setItem("tc.store",JSON.stringify(store));localStorage.removeItem("tc.code");}catch(e){}}
+const authCode=()=>store.admin||store.edit[compId]||store.view[compId]||"";
 const chains={},timers={},pending=new Set();
-let authCode=""; try{authCode=localStorage.getItem("tc.code")||"";}catch(e){}
-let needCode=false, notSet=false, version=-1, lastDocs={};
+let needCode=false, version=-1, lastDocs={};
 async function rpc(fn,args){
   const r=await fetch(CONF.supabaseUrl.replace(/\/+$/,"")+"/rest/v1/rpc/"+fn,{method:"POST",cache:"no-store",
     headers:Object.assign({"Content-Type":"application/json","apikey":CONF.supabaseAnonKey},/^eyJ/.test(CONF.supabaseAnonKey)?{"Authorization":"Bearer "+CONF.supabaseAnonKey}:{}),body:JSON.stringify(args)});
@@ -168,22 +290,26 @@ async function rpc(fn,args){
   return j;
 }
 function save(path,data,delay){
-  if(!canWrite){return;}
-  clearTimeout(timers[path]); pending.add(path);
-  timers[path]=setTimeout(()=>{
-    chains[path]=(chains[path]||Promise.resolve()).then(()=>rpc("tc_put",{p_code:authCode,p_path:path,p_data:data})).then(()=>pending.delete(path)).catch(err=>{
-      pending.delete(path);
+  if(!canWrite) return;
+  const c=compId, code=authCode(), key=c+"|"+path;
+  clearTimeout(timers[key]); pending.add(key);
+  timers[key]=setTimeout(()=>{
+    chains[key]=(chains[key]||Promise.resolve()).then(()=>rpc("tc_put",{p_comp:c,p_code:code,p_path:path,p_data:data})).then(()=>pending.delete(key)).catch(err=>{
+      pending.delete(key);
       if(err&&err.code==="toegang_geweigerd"){canWrite=false;render();toast("Opslaan geweigerd: je invoercode is niet (meer) geldig.");}
       else if(err&&err.code==="ongeldige_gegevens") toast("Opslaan geweigerd: ongeldige gegevens.");
       else toast("Opslaan mislukt. Controleer je internetverbinding en probeer het opnieuw.");
-      poll(true);
+      poll();
     });
   },delay||0);
 }
-const saveCfg=()=>save("config/main",S.cfg||(S.cfg=defCfg()),300);
+const saveCfg=()=>save("config/main",S.cfg,300);
 const saveRoster=t=>save("rosters/t"+t,{players:S.rosters[t]||[]},300);
 const saveLineup=(t,s)=>save(`lineups/t${t}r${s}`,S.lineups[`t${t}r${s}`]||{assign:{}},250);
 const saveResult=key=>save("results/"+key,S.results[key]||{},450);
+const hasResult=k=>{const r=S.results[k];return !!r&&Object.values(r).some(v=>v!==""&&v!=null);};
+const anyResults=()=>Object.keys(S.results).some(hasResult);
+const finalResults=()=>PLAN.matches.filter(x=>x.fase).some(mt=>[1,2,3].some(d=>hasResult(`m${mt.m}d${d}`))||hasResult(`m${mt.m}sd`));
 
 /* ---------- logica ---------- */
 function lineup(t,s){
@@ -221,21 +347,21 @@ function duoRes(m,d){const r=S.results[`m${m}d${d}`]||{};const l=num(r.l),rr=num
   return {l,r:rr,done:l!=null&&rr!=null,pl:l!=null&&rr!=null?(l>rr?1:l===rr?.5:0):null};}
 function tot(m){let pl=0,pr=0,hl=0,hr=0,n=0;for(let d=1;d<=3;d++){const x=duoRes(m,d);if(x.done){n++;pl+=x.pl;pr+=1-x.pl;hl+=x.l;hr+=x.r;}}return {pl,pr,hl,hr,n};}
 function standings(){
-  const st={};for(let t=1;t<=4;t++)st[t]={t,pts:0,holes:0,W:0,G:0,V:0,played:0,vs:{}};
+  const N=NT(), st={};for(let t=1;t<=N;t++)st[t]={t,pts:0,holes:0,W:0,G:0,V:0,played:0,vs:{}};
   let entered=0;
-  for(const mt of MATCHES.filter(x=>x.m<=6)){
+  for(const mt of PLAN.matches.filter(x=>!x.fase)){
     const x=tot(mt.m); entered+=x.n; const A=st[mt.L],B=st[mt.R];
     A.pts+=x.pl;B.pts+=x.pr;A.holes+=x.hl;B.holes+=x.hr;A.vs[mt.R]=x.pl;B.vs[mt.L]=x.pr;
     if(x.n===3){A.played++;B.played++; if(x.pl>x.pr){A.W++;B.V++;}else if(x.pl<x.pr){A.V++;B.W++;}else{A.G++;B.G++;}}
   }
-  const complete=entered===18, po=cfg().playoff||{};
+  const total=PLAN.poule*3, complete=entered===total, po=cfg().playoff||{};
   const arr=Object.values(st);
   for(const a of arr){a.h2h=arr.filter(b=>b.t!==a.t&&b.pts===a.pts&&b.holes===a.holes).reduce((s,b)=>s+(a.vs[b.t]||0),0);
     a.po=num(po[a.t]); a.key=a.pts*1e6+a.holes*1e3+a.h2h*10-(a.po||0)*0.1;}
   for(const a of arr){a.rank=1+arr.filter(b=>b.key>a.key+1e-6).length;}
   const tie=arr.some(a=>arr.filter(b=>b.rank===a.rank).length>1);
   arr.sort((a,b)=>a.rank-b.rank||a.t-b.t); arr.forEach((a,i)=>a.seed=i+1);
-  return {rows:arr,complete,entered,tie};
+  return {rows:arr,complete,entered,total,tie};
 }
 function teamsOf(mt,stand){
   if(mt.L) return [mt.L,mt.R];
@@ -244,22 +370,30 @@ function teamsOf(mt,stand){
 }
 function winner(mt,stand){const [a,b]=teamsOf(mt,stand);if(!a)return null;const x=tot(mt.m);if(x.n<3)return null;
   if(x.pl>x.pr)return a; if(x.pr>x.pl)return b; const w=(S.results[`m${mt.m}sd`]||{}).w; return w==="L"?a:w==="R"?b:null;}
-function startTime(mt,d){const sc=cfg().sched[mt.m-1]||{};return addMin(sc.t||DEFAULT_TIMES[mt.m-1],(d-1)*(num(cfg().interval)||10));}
+function startTime(mt,d){const sc=cfg().sched[mt.m-1]||{};return addMin(sc.t||"09:00",(d-1)*(num(cfg().interval)||10));}
+const sessLabel=s=>(cfg().sessions[s-1]||{}).label||("Ronde "+s);
+const sessDate=s=>(cfg().sessions[s-1]||{}).date||"";
+const finalMatch=f=>PLAN.matches.find(x=>x.fase===f);
 
 /* ---------- weergave ---------- */
-function renderTabs(){
-  const ab=$("#authbtn"); if(ab) ab.innerHTML=!configured||needCode||notSet?"":(canWrite?`<button class="hbtn on" data-logout="1" title="Stoppen met invoeren">Invoer aan · stoppen</button>`:`<button class="hbtn" data-login="1">Invoeren</button>`);
-  $("#tabs").innerHTML=TABS.map(([k,l])=>`<button class="tab" role="tab" data-tab="${k}" aria-selected="${ui.tab===k}">${l}</button>`).join("");
-  const c=cfg(); $("#title").textContent=c.name||"Training Competitie";
-  const ds=[fmtDate(c.dag1),fmtDate(c.dag2)].filter(Boolean).join(" en ");
-  $("#subtitle").textContent=[c.baan,ds].filter(Boolean).join(" · ")||"Vier teams · greensome over 9 holes";
+function renderHead(){
+  const ab=$("#authbtn"), loginable=configured&&listLoaded&&!needCode&&(compId||adminSet);
+  if(ab) ab.innerHTML=!loginable?"":(canWrite||(!compId&&isAdmin)?`<button class="hbtn on" data-logout="1" title="Stoppen met invoeren">${isAdmin?"Beheer aan":"Invoer aan"} · stoppen</button>`:`<button class="hbtn" data-login="1">${compId?"Invoeren":"Beheer"}</button>`);
+  const cs=$("#compsel");
+  if(cs){ if(comps.length>1||(isAdmin&&comps.length)){cs.hidden=false;cs.innerHTML=comps.map(c=>`<option value="${esc(c.id)}" ${c.id===compId?"selected":""}>${esc(c.id===compId&&S.cfg?S.cfg.name:c.name)}</option>`).join("");} else cs.hidden=true; }
+  const tb=tabs(); if(!tb.some(x=>x[0]===ui.tab)) ui.tab="uitslagen";
+  $("#tabs").innerHTML=compId?tb.map(([k,l])=>`<button class="tab" role="tab" data-tab="${k}" aria-selected="${ui.tab===k}">${l}</button>`).join(""):"";
+  const c=cfg(), name=compId?(S.cfg?c.name:((comps.find(x=>x.id===compId)||{}).name||"")):"Wintercompetities";
+  $("#title").textContent=name||"Competitie"; document.title=name||"Competities";
+  const ds=[...new Set(c.sessions.map(s=>s.date).filter(Boolean))].sort(); const per=ds.length?(ds.length>1?fmtDate(ds[0])+" t/m "+fmtDate(ds[ds.length-1]):fmtDate(ds[0])):"";
+  $("#subtitle").textContent=compId&&S.cfg?([c.baan,per].filter(Boolean).join(" · ")||`${NT()} teams · greensome over 9 holes`):"";
 }
 function banner(){
   if(offline) return `<div class="banner">Geen verbinding. De app probeert het automatisch opnieuw; wat je nu invoert wordt mogelijk niet bewaard.</div>`;
-  if(!canWrite&&ui.tab!=="stand"&&ui.tab!=="startlijst") return `<div class="banner">Je kijkt mee. Om uitslagen of opstellingen in te voeren: tik bovenaan op <b>Invoeren</b> en vul de invoercode in.</div>`;
+  if(!canWrite&&ui.tab!=="stand"&&ui.tab!=="startlijst") return `<div class="banner">Je kijkt mee. Om uitslagen of opstellingen in te voeren: tik bovenaan op <b>Invoeren</b> en vul de invoercode van deze competitie in.</div>`;
   return "";
 }
-function namesHtml(lu,d,right){
+function namesHtml(lu,d){
   if(!lu||lu.duos.length!==3) return `<div class="names"><span class="h">Opstelling nog niet compleet</span></div>`;
   const du=lu.duos[d-1]; return `<div class="names">${du.players.map(p=>esc(p.name)).join("<br>")}<br><span class="h">gez. hcp ${nl(du.sum)}</span></div>`;
 }
@@ -270,21 +404,20 @@ function stepper(m,d,side,val,win){
     <span class="v" aria-live="polite">${val==null?"·":val}</span>
     <button type="button" data-step="${m}|${d}|${side}|1" aria-label="Plus één" ${dis}>+</button></div>`;
 }
-function sessionState(s,stand){const ms=MATCHES.filter(x=>x.s===s);let n=0;for(const mt of ms)n+=tot(mt.m).n;return n===0?"":n===ms.length*3?"done":"busy";}
+function sessionState(s){const ms=PLAN.matches.filter(x=>x.s===s);let n=0;for(const mt of ms)n+=tot(mt.m).n;return n===0?"":n===ms.length*3?"done":"busy";}
 function vUitslagen(){
-  const stand=standings();
-  if(ui.sess==null){ui.sess=(SESSIONS.find(x=>sessionState(x.s,stand)!=="done")||SESSIONS[0]).s;}
-  let h=banner()+`<div class="chips">${SESSIONS.map(x=>{const st=sessionState(x.s,stand);return `<button class="chip" data-sess="${x.s}" aria-pressed="${ui.sess===x.s}">${x.label}<span class="dot ${st}"></span></button>`;}).join("")}</div>`;
-  const dag=SESSIONS[ui.sess-1].dag, date=fmtDate(cfg()["dag"+dag]);
-  h+=`<p class="note">Tik op + of − voor het aantal gewonnen holes per duo. Winst 1 punt, gelijk 0,5, verlies 0.${date?" Dag "+dag+": "+date+".":""}</p><div class="grid2">`;
-  for(const mt of MATCHES.filter(x=>x.s===ui.sess)){
+  const stand=standings(), ss=[];for(let s=1;s<=PLAN.nSess;s++)ss.push(s);
+  if(ui.sess==null||ui.sess>PLAN.nSess){ui.sess=ss.find(s=>sessionState(s)!=="done")||1;}
+  let h=banner()+`<div class="chips">${ss.map(s=>{const st=sessionState(s);return `<button class="chip" data-sess="${s}" aria-pressed="${ui.sess===s}">${esc(sessLabel(s))}<span class="dot ${st}"></span></button>`;}).join("")}</div>`;
+  const date=fmtDate(sessDate(ui.sess)), bye=PLAN.byes[ui.sess];
+  h+=`<p class="note">Tik op + of − voor het aantal gewonnen holes per duo. Winst 1 punt, gelijk 0,5, verlies 0.${date?" Speeldatum: "+date+".":""}${bye?` <b>${esc(tname(bye))}</b> is deze ronde vrij.`:""}</p><div class="grid2">`;
+  for(const mt of PLAN.matches.filter(x=>x.s===ui.sess)){
     const [a,b]=teamsOf(mt,stand), x=tot(mt.m), fin=!!mt.fase;
     const la=a?lineup(a,mt.s):null, lb=b?lineup(b,mt.s):null;
-    const tn=t=>t?esc(tname(t)):"";
-    const ta=a?tn(a):`Nr ${mt.seeds[0]} poule`, tb=b?tn(b):`Nr ${mt.seeds[1]} poule`;
+    const ta=a?esc(tname(a)):`Nr ${mt.seeds[0]} poule`, tb=b?esc(tname(b)):`Nr ${mt.seeds[1]} poule`;
     const sc=cfg().sched[mt.m-1]||{};
     h+=`<section class="card"><div class="card-h${fin?" final":""}"><div><div class="lbl">${fin?mt.fase:"Wedstrijd "+mt.m} · ${startTime(mt,1)} · tee ${esc(sc.tee||1)}</div><div class="teams">${ta} – ${tb}</div></div><div class="score">${x.n?nl(x.pl)+" – "+nl(x.pr):"–"}</div></div>`;
-    if(fin&&!a){h+=`<div class="empty">De teams worden bekend zodra alle 18 poulepartijen zijn ingevuld (${stand.entered} van 18).</div></section>`;continue;}
+    if(fin&&!a){h+=`<div class="empty">De teams worden bekend zodra alle ${stand.total} poulepartijen zijn ingevuld (${stand.entered} van ${stand.total}).</div></section>`;continue;}
     for(let d=1;d<=3;d++){
       const r=duoRes(mt.m,d);
       h+=`<div class="duo"><div class="side">${namesHtml(la,d)}${stepper(mt.m,d,"l",r.l,r.done&&r.pl===1)}</div>
@@ -303,12 +436,19 @@ function vUitslagen(){
   return h+`</div>`;
 }
 function vOpstelling(){
-  const t=ui.team,s=ui.round,roster=S.rosters[t]||[],rule=(cfg().teams[t-1]||{}).rule||"vrij";
-  let h=banner()+`<h2>Controle per team en ronde</h2><div class="card tbl-wrap"><table class="check-grid"><thead><tr><th>Team</th>${SESSIONS.map(x=>`<th>${x.label}</th>`).join("")}</tr></thead><tbody>`;
-  for(let tt=1;tt<=4;tt++){h+=`<tr><td><b>${esc(tname(tt))}</b></td>`+SESSIONS.map(x=>{const lu=lineup(tt,x.s);const c=lu.status==="ok"?"ok":lu.status==="fout"?"bad":"wait";return `<td><span class="pill ${c}" title="${esc(lu.msg)}">${lu.status==="ok"?"OK":lu.status==="fout"?"Fout":"Leeg"}</span></td>`;}).join("")+`</tr>`;}
+  const N=NT(); if(ui.team>N) ui.team=1; if(ui.round>PLAN.nSess) ui.round=1;
+  const t=ui.team,s=ui.round,roster=S.rosters[t]||[],rule=(cfg().teams[t-1]||{}).rule||"vrij", stand=standings();
+  const ss=[];for(let k=1;k<=PLAN.nSess;k++)ss.push(k);
+  const isFin=k=>PLAN.fs===k;
+  let h=banner()+`<h2>Controle per team en ronde</h2><div class="card tbl-wrap"><table class="check-grid"><thead><tr><th>Team</th>${ss.map(k=>`<th>${esc(sessLabel(k))}</th>`).join("")}</tr></thead><tbody>`;
+  for(let tt=1;tt<=N;tt++){h+=`<tr><td><b>${esc(tname(tt))}</b></td>`+ss.map(k=>{
+    if(PLAN.byes[k]===tt) return `<td><span class="cap">vrij</span></td>`;
+    if(isFin(k)&&stand.complete&&!PLAN.matches.filter(x=>x.s===k).some(mt=>teamsOf(mt,stand).includes(tt))) return `<td><span class="cap">–</span></td>`;
+    const lu=lineup(tt,k);const c=lu.status==="ok"?"ok":lu.status==="fout"?"bad":"wait";return `<td><span class="pill ${c}" title="${esc(lu.msg)}">${lu.status==="ok"?"OK":lu.status==="fout"?"Fout":"Leeg"}</span></td>`;}).join("")+`</tr>`;}
   h+=`</tbody></table></div><h2>Opstelling invullen</h2>`;
-  h+=`<div class="chips">${[1,2,3,4].map(x=>`<button class="chip" data-team="${x}" aria-pressed="${t===x}">${esc(tname(x))}</button>`).join("")}</div>`;
-  h+=`<div class="chips">${SESSIONS.map(x=>`<button class="chip" data-round="${x.s}" aria-pressed="${s===x.s}">${x.s===4?"Finale":x.label}</button>`).join("")}</div>`;
+  h+=`<div class="chips">${cfg().teams.map((_,i)=>`<button class="chip" data-team="${i+1}" aria-pressed="${t===i+1}">${esc(tname(i+1))}</button>`).join("")}</div>`;
+  h+=`<div class="chips">${ss.map(k=>`<button class="chip" data-round="${k}" aria-pressed="${s===k}">${esc(sessLabel(k))}</button>`).join("")}</div>`;
+  if(PLAN.byes[s]===t) return h+`<div class="card empty">${esc(tname(t))} is in ${esc(sessLabel(s))} vrij.</div>`;
   h+=`<p class="note">Regel voor ${esc(tname(t))}: <b>${RULES[rule]}</b>. ${rule==="auto"?"Kies wie er speelt; de koppels worden op handicap gevormd (1+2, 3+4, 5+6).":"De letter bepaalt wie samen speelt. Het duonummer volgt uit de gezamenlijke handicap, laag naar hoog."} Wijzig de regel bij Instellingen.</p>`;
   if(!roster.length) return h+`<div class="card empty">Nog geen spelers voor ${esc(tname(t))}. Voeg ze toe bij Instellingen.</div>`;
   const key=`t${t}r${s}`, assign=(S.lineups[key]||{}).assign||{}, lu=lineup(t,s), dis=!canWrite?"disabled":"";
@@ -324,27 +464,40 @@ function vOpstelling(){
   if(lu.duos.length) h+=lu.duos.map((d,i)=>`<div><b>Duo ${i+1}</b>: ${d.players.map(p=>esc(p.name)).join(" / ")} <span class="cap">(gez. ${nl(d.sum)})</span></div>`).join("");
   return h+`</div></section>`;
 }
+function finalRanking(st){
+  const N=NT(), f=cfg().finals, rows=[];
+  if(f==="geen"){ for(const r of st.rows) rows.push([r.seed,st.complete?r.t:null,"Poulestand"]); return rows; }
+  const gf=finalMatch("Grote finale"),[g1,g2]=teamsOf(gf,st),wg=winner(gf,st);
+  rows.push([1,wg,"Winnaar grote finale: kampioen"],[2,wg?(wg===g1?g2:g1):null,"Verliezer grote finale"]);
+  let from=3;
+  if(f==="beide"){const tf=finalMatch("Troostfinale"),[t1,t2]=teamsOf(tf,st),wt=winner(tf,st);
+    rows.push([3,wt,"Winnaar troostfinale"],[4,wt?(wt===t1?t2:t1):null,"Verliezer troostfinale"]);from=5;}
+  for(let p=from;p<=N;p++){const r=st.rows.find(x=>x.seed===p);rows.push([p,st.complete&&r?r.t:null,"Poulestand"]);}
+  return rows;
+}
 function vStand(){
-  const st=standings(); let h=banner()+`<h2>Poulestand</h2><div class="card tbl-wrap"><table><thead><tr><th>#</th><th>Team</th><th class="num">Gesp.</th><th class="num">W</th><th class="num">G</th><th class="num">V</th><th class="num">Punten</th><th class="num">Holes</th><th class="num">Onderl.</th><th>Naar</th></tr></thead><tbody>`;
-  for(const r of st.rows) h+=`<tr><td class="rank">${r.rank}</td><td><b>${esc(tname(r.t))}</b></td><td class="num">${r.played}</td><td class="num">${r.W}</td><td class="num">${r.G}</td><td class="num">${r.V}</td><td class="num"><b>${nl(r.pts)}</b></td><td class="num">${r.holes}</td><td class="num">${nl(r.h2h)}</td><td>${st.complete?(r.seed<=2?"Grote finale":"Troostfinale"):""}</td></tr>`;
+  const st=standings(), N=NT(), f=cfg().finals;
+  const naar=r=>!st.complete||f==="geen"?"":r.seed<=2?"Grote finale":(f==="beide"&&r.seed<=4)?"Troostfinale":"";
+  let h=banner()+`<h2>Poulestand</h2><div class="card tbl-wrap"><table><thead><tr><th>#</th><th>Team</th><th class="num">Gesp.</th><th class="num">W</th><th class="num">G</th><th class="num">V</th><th class="num">Punten</th><th class="num">Holes</th><th class="num">Onderl.</th>${f!=="geen"?"<th>Naar</th>":""}</tr></thead><tbody>`;
+  for(const r of st.rows) h+=`<tr><td class="rank">${r.rank}</td><td><b>${esc(tname(r.t))}</b></td><td class="num">${r.played}</td><td class="num">${r.W}</td><td class="num">${r.G}</td><td class="num">${r.V}</td><td class="num"><b>${nl(r.pts)}</b></td><td class="num">${r.holes}</td><td class="num">${nl(r.h2h)}</td>${f!=="geen"?`<td>${naar(r)}</td>`:""}</tr>`;
   h+=`</tbody></table></div>`;
-  h+=`<p class="note" style="margin-top:8px">${st.entered===0?"De poulefase is nog niet begonnen.":!st.complete?`Poulefase lopend: ${st.entered} van 18 partijen binnen.`:st.tie?"Volledig gelijke stand. Speel een sudden-death en vul hieronder de plaatsen in.":"Poulestand definitief."} Volgorde: punten, gewonnen holes, onderling resultaat, sudden-death.</p>`;
+  h+=`<p class="note" style="margin-top:8px">${st.entered===0?"De poulefase is nog niet begonnen.":!st.complete?`Poulefase lopend: ${st.entered} van ${st.total} partijen binnen.`:st.tie?"Volledig gelijke stand. Speel een sudden-death en vul hieronder de plaatsen in.":"Poulestand definitief."} Volgorde: punten, gewonnen holes, onderling resultaat, sudden-death.</p>`;
   const po=cfg().playoff||{}, dis=!canWrite?"disabled":"";
   if(st.tie||Object.values(po).some(v=>v)){
-    h+=`<h2>Sudden-death</h2><section class="card"><div class="form"><p class="note" style="margin:0">Alleen invullen bij een volledig gelijke stand: 1 = winnaar.</p><div class="row">${[1,2,3,4].map(t=>`<label class="f">${esc(tname(t))}<select id="po${t}" data-po="${t}" ${dis}><option value="">–</option>${[1,2,3,4].map(n=>`<option ${String(po[t]||"")===String(n)?"selected":""}>${n}</option>`).join("")}</select></label>`).join("")}</div></div></section>`;
+    const opts=[];for(let n=1;n<=N;n++)opts.push(n);
+    h+=`<h2>Sudden-death</h2><section class="card"><div class="form"><p class="note" style="margin:0">Alleen invullen bij een volledig gelijke stand: 1 = winnaar.</p><div class="row">${cfg().teams.map((_,i)=>{const t=i+1;return `<label class="f">${esc(tname(t))}<select id="po${t}" data-po="${t}" ${dis}><option value="">–</option>${opts.map(n=>`<option ${String(po[t]||"")===String(n)?"selected":""}>${n}</option>`).join("")}</select></label>`;}).join("")}</div></div></section>`;
   }
   h+=`<h2>Eindrangschikking</h2><div class="card tbl-wrap"><table><tbody>`;
-  const gf=MATCHES[7],tf=MATCHES[6],[g1,g2]=teamsOf(gf,st),[t1,t2]=teamsOf(tf,st),wg=winner(gf,st),wt=winner(tf,st);
-  const rows=[[1,wg,"Winnaar grote finale: kampioen"],[2,wg?(wg===g1?g2:g1):null,"Verliezer grote finale"],[3,wt,"Winnaar troostfinale"],[4,wt?(wt===t1?t2:t1):null,"Verliezer troostfinale"]];
-  for(const [p,t,lab] of rows) h+=`<tr><td class="rank">${p}</td><td><b>${t?esc(tname(t)):"<span class='cap'>nog niet bekend</span>"}</b></td><td class="cap">${lab}</td></tr>`;
+  for(const [p,t,lab] of finalRanking(st)) h+=`<tr><td class="rank">${p}</td><td><b>${t?esc(tname(t)):"<span class='cap'>nog niet bekend</span>"}</b></td><td class="cap">${lab}</td></tr>`;
   return h+`</tbody></table></div>`;
 }
 function vStartlijst(){
   const st=standings(); let h=banner();
-  for(const dag of [1,2]){
-    const date=fmtDate(cfg()["dag"+dag]); h+=`<h2>Dag ${dag}${date?" · "+date:""}</h2><div class="card tbl-wrap"><table><thead><tr><th>Tijd</th><th>Tee</th><th>Wedstrijd</th><th>Duo</th><th>Links</th><th>Rechts</th></tr></thead><tbody>`;
+  const groups=[]; for(let s=1;s<=PLAN.nSess;s++){const d=sessDate(s), g=groups[groups.length-1]; if(d&&g&&g.date===d) g.ss.push(s); else groups.push({date:d,ss:[s]});}
+  for(const g of groups){
+    h+=`<h2>${g.ss.map(s=>esc(sessLabel(s))).join(" en ")}${g.date?" · "+fmtDate(g.date):""}</h2><div class="card tbl-wrap"><table><thead><tr><th>Tijd</th><th>Tee</th><th>Wedstrijd</th><th>Duo</th><th>Links</th><th>Rechts</th></tr></thead><tbody>`;
     const rows=[];
-    for(const mt of MATCHES.filter(x=>SESSIONS[x.s-1].dag===dag)){
+    for(const mt of PLAN.matches.filter(x=>g.ss.includes(x.s))){
       const [a,b]=teamsOf(mt,st), la=a?lineup(a,mt.s):null, lb=b?lineup(b,mt.s):null, sc=cfg().sched[mt.m-1]||{};
       for(let d=1;d<=3;d++){
         const nm=(lu,t,seed)=>!t?`Nr ${seed} poule`:`<b>${esc(tname(t))}</b><br>`+(lu&&lu.duos.length===3?lu.duos[d-1].players.map(p=>esc(p.name)).join(" / "):"<span class='cap'>opstelling niet compleet</span>");
@@ -352,129 +505,282 @@ function vStartlijst(){
       }
     }
     rows.sort((x,y)=>x.t.localeCompare(y.t)); h+=rows.map(r=>r.html).join("")+`</tbody></table></div>`;
+    const byes=g.ss.map(s=>PLAN.byes[s]).filter(Boolean); if(byes.length) h+=`<p class="note" style="margin-top:6px">Vrij: ${byes.map(t=>esc(tname(t))).join(", ")}.</p>`;
   }
   return h;
 }
 function vInstellingen(){
-  const c=cfg(), dis=!canWrite?"disabled":"";
+  const c=cfg(), dis=!canWrite?"disabled":"", N=NT(), locked=anyResults(), finLocked=finalResults();
   let h=banner()+`<h2>Competitie</h2><section class="card"><div class="form"><div class="row">
     <label class="f">Naam<input type="text" id="c-name" data-cfg="name" value="${esc(c.name)}" ${dis}></label>
     <label class="f">Baan of lus<input type="text" id="c-baan" data-cfg="baan" value="${esc(c.baan)}" placeholder="Bijv. lus A, holes 1-9" ${dis}></label>
-    <label class="f">Datum dag 1<input type="date" id="c-dag1" data-cfg="dag1" value="${esc(c.dag1)}" ${dis}></label>
-    <label class="f">Datum dag 2<input type="date" id="c-dag2" data-cfg="dag2" value="${esc(c.dag2)}" ${dis}></label>
-    <label class="f">Interval tussen duo's (min)<input type="number" id="c-int" min="5" max="20" data-cfg="interval" value="${esc(c.interval)}" ${dis}></label></div></div></section>`;
+    <label class="f">Interval tussen duo's (min)<input type="number" id="c-int" min="5" max="20" data-cfg="interval" value="${esc(c.interval)}" ${dis}></label>
+    <label class="f">Finales<select id="c-fin" data-cfg="finals" ${dis} ${finLocked?"disabled":""}>${Object.entries(FINALS).filter(([k])=>k==="geen"||(k==="groot"&&N>=2)||(k==="beide"&&N>=4)).map(([k,l])=>`<option value="${k}" ${c.finals===k?"selected":""}>${l}</option>`).join("")}</select></label></div>
+    <p class="note" style="margin:0">${N} teams: ${PLAN.R} poulerondes${N%2?" (per ronde is één team vrij)":""}${PLAN.fs?", daarna de finales":""}. Elk team speelt één keer tegen elk ander team.</p></div></section>`;
+  h+=`<h2>Speeldagen</h2><p class="note">Geef elke ronde een naam en datum. Rondes met dezelfde datum staan samen op de startlijst.</p><section class="card tbl-wrap"><table><thead><tr><th>Ronde</th><th>Naam</th><th>Datum</th></tr></thead><tbody>`;
+  c.sessions.forEach((s,i)=>{h+=`<tr><td>${i+1}${PLAN.fs===i+1?" (finales)":""}</td><td><input type="text" id="se-l${i}" data-sess-l="${i}" value="${esc(s.label)}" ${dis}></td><td><input type="date" id="se-d${i}" data-sess-d="${i}" value="${esc(s.date)}" ${dis}></td></tr>`;});
+  h+=`</tbody></table></section>`;
   h+=`<h2>Teams en opstellingsregel</h2><section class="card"><div class="form">`;
   c.teams.forEach((tm,i)=>{h+=`<div class="row"><label class="f">Team ${i+1}<input type="text" id="t-name${i}" data-tname="${i}" value="${esc(tm.name)}" ${dis}></label>
     <label class="f">Opstellingsregel<select id="t-rule${i}" data-trule="${i}" ${dis}>${Object.entries(RULES).map(([k,l])=>`<option value="${k}" ${tm.rule===k?"selected":""}>${l}</option>`).join("")}</select></label></div>`;});
-  h+=`<p class="note" style="margin:0">Vrij: koppels vrij (27/36 holes). Laagste twee niet in duo 3: regel uit de 18-holes competitie. Automatisch: spelers op handicap, 1+2, 3+4, 5+6.</p></div></section>`;
-  h+=`<h2>Speelschema</h2><p class="note">De tee times zijn een voorstel; pas ze hier aan.</p><section class="card tbl-wrap"><table><thead><tr><th>Wedstrijd</th><th>Dagdeel</th><th>Teams</th><th>Start duo 1</th><th>Tee</th></tr></thead><tbody>`;
-  for(const mt of MATCHES){const sc=c.sched[mt.m-1]||{};h+=`<tr><td>${mt.fase||"Wedstrijd "+mt.m}</td><td>${SESSIONS[mt.s-1].label.replace("Finales","Dag 2 middag")}</td><td>${mt.L?esc(tname(mt.L))+" – "+esc(tname(mt.R)):"Nr "+mt.seeds.join(" – nr ")}</td>
+  h+=`<p class="note" style="margin:0">Vrij: koppels vrij (27/36 holes). Laagste twee niet in duo 3: regel uit de 18-holes competitie. Automatisch: spelers op handicap, 1+2, 3+4, 5+6.</p>
+    <div class="actions" style="padding:0"><button class="btn ghost" data-addteam="1" ${N>=MAXT||locked?"disabled":dis}>Team toevoegen</button><button class="btn ghost" data-delteam="1" ${N<=2||locked?"disabled":dis}>Laatste team verwijderen</button></div>
+    ${locked?`<p class="note" style="margin:0">Teams toevoegen of verwijderen kan alleen zolang er nog geen uitslagen zijn, omdat het speelschema dan verandert.</p>`:""}</div></section>`;
+  h+=`<h2>Speelschema</h2><p class="note">De tee times zijn een voorstel; pas ze hier aan.</p><section class="card tbl-wrap"><table><thead><tr><th>Wedstrijd</th><th>Ronde</th><th>Teams</th><th>Start duo 1</th><th>Tee</th></tr></thead><tbody>`;
+  for(const mt of PLAN.matches){const sc=c.sched[mt.m-1]||{};h+=`<tr><td>${mt.fase||"Wedstrijd "+mt.m}</td><td>${esc(sessLabel(mt.s))}</td><td>${mt.L?esc(tname(mt.L))+" – "+esc(tname(mt.R)):"Nr "+mt.seeds.join(" – nr ")}</td>
     <td><input type="time" id="s-t${mt.m}" data-sched="${mt.m}|t" value="${esc(sc.t)}" ${dis}></td><td><select id="s-tee${mt.m}" data-sched="${mt.m}|tee" ${dis}><option ${String(sc.tee)==="1"?"selected":""}>1</option><option ${String(sc.tee)==="10"?"selected":""}>10</option></select></td></tr>`;}
-  h+=`</tbody></table></section><h2>Spelers</h2><p class="note">Maximaal 8 spelers per team. Gebruik voornaam en voorletter van de achternaam, bijvoorbeeld Rob H. Wijzigingen worden opgeslagen zodra je een veld verlaat.</p>`;
-  for(let t=1;t<=4;t++){
-    const r=S.rosters[t]||[];
-    h+=`<section class="card" style="margin-bottom:14px"><div class="card-h"><div class="teams">${esc(tname(t))}</div><span class="lbl">${r.length} van 8</span></div>
+  h+=`</tbody></table></section><h2>Spelers</h2><p class="note">Maximaal ${MAXP} spelers per team. Typ je een volledige naam (bijvoorbeeld Rob Hendriks), dan maakt de app er zelf Rob H. van; de volledige naam wordt niet opgeslagen. Met <b>Spelers plakken</b> zet je een hele lijst in één keer over, bijvoorbeeld uit Excel.</p>`;
+  for(let t=1;t<=N;t++){
+    const r=S.rosters[t]||[], open=ui.paste&&ui.paste.t===t;
+    h+=`<section class="card" style="margin-bottom:14px"><div class="card-h"><div class="teams">${esc(tname(t))}</div><span class="lbl">${r.length} van ${MAXP}</span></div>
       <div class="rost head"><span>Naam</span><span>Hcp</span><span></span></div>`;
-    r.forEach((p,i)=>{const cd=ui.confirmDel===p.id;
+    r.forEach(p=>{const cd=ui.confirmDel===p.id;
       h+=`<div class="rost"><input type="text" id="p-n-${p.id}" aria-label="Naam" data-pl="${t}|${p.id}|name" value="${esc(p.name)}" ${dis}>
         <input type="text" inputmode="decimal" id="p-h-${p.id}" aria-label="Playing handicap" data-pl="${t}|${p.id}|hcp" value="${p.hcp===""||p.hcp==null?"":esc(nl(p.hcp))}" ${dis}>
         ${cd?`<span><button class="btn danger" data-delok="${t}|${p.id}">Verwijder</button> <button class="linkbtn" data-delno="1">annuleer</button></span>`:`<button class="linkbtn" data-del="${p.id}" ${dis} aria-label="Verwijder ${esc(p.name)}">verwijder</button>`}</div>`;});
-    h+=`<div class="actions" style="padding-top:10px"><button class="btn ghost" data-add="${t}" ${r.length>=8?"disabled":dis}>Speler toevoegen</button><button class="btn ghost" data-sort="${t}" ${r.length<2?"disabled":dis}>Sorteer op hcp</button></div></section>`;
+    if(open){h+=`<div class="form"><label class="f">Spelers plakken: één speler per regel, naam en handicap (bijv. Rob Hendriks 2,1)<textarea id="paste-${t}" data-paste="${t}" rows="6" spellcheck="false" autocomplete="off">${esc(ui.paste.text)}</textarea></label><div id="paste-prev">${pastePreview()}</div>
+      <div class="actions" style="padding:0"><button class="btn" data-pasteadd="${t}">Toevoegen aan ${esc(tname(t))}</button><button class="btn ghost" data-pasteno="1">Annuleren</button></div></div>`;}
+    h+=`<div class="actions" style="padding-top:10px"><button class="btn ghost" data-add="${t}" ${r.length>=MAXP?"disabled":dis}>Speler toevoegen</button>${open?"":`<button class="btn ghost" data-pastetoggle="${t}" ${r.length>=MAXP?"disabled":dis}>Spelers plakken</button>`}<button class="btn ghost" data-sort="${t}" ${r.length<2?"disabled":dis}>Sorteer op hcp</button></div></section>`;
   }
   return h+vData();
 }
-function vLogin(){
-  const edit=!!ui.login&&!needCode;
-  return `<section class="card" style="max-width:420px;margin:24px auto"><div class="card-h"><div class="teams">${edit?"Invoercode":"Toegangscode"}</div></div>
-    <form class="form" id="login" data-sig="${edit?1:0}${ui.badCode?1:0}"><p class="note" style="margin:0">${edit?"Vul de invoercode in. Die hebben alleen de captains en de organisator.":"Deze competitie is afgeschermd. Vul de kijkcode of de invoercode in die je van de organisator hebt gekregen."}</p>
-    <label class="f">Code<input type="password" id="code-in" autocomplete="current-password" value=""></label>
-    ${ui.badCode?'<p class="note" style="margin:0;color:var(--bad)">Deze code klopt niet.</p>':""}
-    <div class="actions" style="padding:0"><button class="btn" type="submit">Openen</button>${edit?'<button class="btn ghost" type="button" data-logincancel="1">Annuleren</button>':""}</div></form></section>`;
+function allNames(exceptId){const s=[];for(const r of Object.values(S.rosters))for(const p of r||[])if(p.id!==exceptId)s.push(p.name);return s;}
+function pastePreview(){
+  if(!ui.paste) return "";
+  const parsed=parseTeams(ui.paste.text,false); if(!parsed.length||!parsed[0].players.length) return `<p class="note" style="margin:0">Nog niets geplakt.</p>`;
+  const t=ui.paste.t, room=MAXP-(S.rosters[t]||[]).length;
+  const an=anonTeams(parsed,allNames())[0]; an.name=tname(t);
+  let h=previewHtml([{name:an.name,players:an.players.slice(0,room)}],{teams:false});
+  if(an.players.length>room) h=`<p class="note warn">Er is nog plaats voor ${room} speler(s); de rest wordt niet toegevoegd.</p>`+h;
+  return h;
 }
 function vData(){
   return `<h2>Gegevens</h2><section class="card"><div class="form">
-    <p class="note" style="margin:0">Maak voor en na elke speeldag een export als reservekopie. Met <b>Export terugzetten</b> vervang je alle gegevens door die van een eerdere export.</p>
+    <p class="note" style="margin:0">Maak voor en na elke speeldag een export als reservekopie. Met <b>Export terugzetten</b> vervang je alle gegevens van deze competitie door die van een eerdere export.</p>
     <div class="actions" style="padding:0"><button class="btn ghost" data-export="1">Gegevens exporteren</button>
     <label class="btn ghost" for="imp-file" style="display:inline-block">Export terugzetten…</label><input type="file" id="imp-file" accept="application/json,.json" hidden ${!canWrite?"disabled":""}></div>
-    ${ui.importDocs?`<div class="banner" style="margin:0">Dit vervangt <b>alle</b> huidige gegevens door de inhoud van <b>${esc(ui.importName)}</b> (${Object.keys(ui.importDocs).length} onderdelen).
+    ${ui.importDocs?`<div class="banner" style="margin:0">Dit vervangt <b>alle</b> huidige gegevens van deze competitie door de inhoud van <b>${esc(ui.importName)}</b> (${Object.keys(ui.importDocs).length} onderdelen).
       <div class="actions" style="padding:8px 0 0"><button class="btn danger" data-impok="1">Vervangen</button><button class="btn ghost" data-impno="1">Annuleren</button></div></div>`:""}
   </div></section>`;
 }
+function ncPreview(){
+  const parsed=parseTeams(ui.nc.text,true);
+  return previewHtml(anonTeams(parsed,[]),{teams:true});
+}
+function vBeheer(){
+  const link=id=>location.origin+location.pathname+"?c="+encodeURIComponent(id);
+  let h=`<h2>Competities</h2>`;
+  if(!comps.length) h+=`<div class="card empty">Nog geen competities. Maak hieronder de eerste aan.</div>`;
+  else{
+    h+=`<div class="card tbl-wrap"><table><thead><tr><th>Competitie</th><th class="num">Teams</th><th>Invoercode</th><th>Kijkcode</th><th></th></tr></thead><tbody>`;
+    for(const c of comps){
+      h+=`<tr><td><b>${esc(c.name)}</b>${c.id===compId?' <span class="pill ok">open</span>':""}<br><span class="cap">${esc(link(c.id))}</span></td><td class="num">${c.teams}</td>
+        <td>${c.hasEdit?"ingesteld":'<span class="pill bad">ontbreekt</span>'}</td><td>${c.hasView?"ingesteld":'<span class="cap">geen: iedereen met de link kijkt mee</span>'}</td>
+        <td style="white-space:nowrap">${c.id===compId?"":`<button class="linkbtn" data-open="${esc(c.id)}">openen</button> · `}<button class="linkbtn" data-copy="${esc(c.id)}">link kopiëren</button> · <button class="linkbtn" data-codes="${esc(c.id)}">codes wijzigen</button> · <button class="linkbtn" data-delc="${esc(c.id)}">verwijderen</button></td></tr>`;
+      if(ui.codesFor===c.id) h+=`<tr><td colspan="5"><div class="form" style="padding:4px 0"><div class="row">
+        <label class="f">Nieuwe invoercode (minstens 8 tekens)<input type="text" data-cc="edit" value="${esc(ui.cc.edit)}" autocomplete="off" spellcheck="false"></label>
+        <label class="f">Nieuwe kijkcode (leeg = iedereen met de link kijkt mee)<input type="text" data-cc="view" value="${esc(ui.cc.view)}" autocomplete="off" spellcheck="false"></label></div>
+        <p class="note" style="margin:0">De oude codes werken daarna niet meer. Geef de nieuwe invoercode aan de captains van deze competitie.</p>
+        <div class="actions" style="padding:0"><button class="btn" data-ccsave="${esc(c.id)}">Codes opslaan</button><button class="btn ghost" data-ccno="1">Annuleren</button></div></div></td></tr>`;
+      if(ui.delFor===c.id) h+=`<tr><td colspan="5"><div class="banner" style="margin:4px 0">Verwijder <b>${esc(c.name)}</b> met alle teams, opstellingen en uitslagen. Dit kan niet ongedaan worden gemaakt. Maak eerst een export als je de gegevens wilt bewaren.
+        <div class="actions" style="padding:8px 0 0"><button class="btn danger" data-delcok="${esc(c.id)}">Definitief verwijderen</button><button class="btn ghost" data-delcno="1">Annuleren</button></div></div></td></tr>`;
+    }
+    h+=`</tbody></table></div>`;
+  }
+  const busy=ui.busy?"disabled":"";
+  h+=`<h2>Nieuwe competitie</h2><section class="card"><div class="form">
+    <label class="f">Naam van de competitie<input type="text" data-nc="name" value="${esc(ui.nc.name)}" placeholder="Bijv. Wintercompetitie Heren 2026-2027" autocomplete="off"></label>
+    <label class="f">Teams en spelers<textarea data-nc="text" rows="12" spellcheck="false" autocomplete="off" placeholder="Heren 1:&#10;Rob Hendriks 2,1&#10;Andre Kuipers 7,2 (c)&#10;&#10;Heren 2:&#10;Pascal de Nijs 5,4&#10;…">${esc(ui.nc.text)}</textarea></label>
+    <p class="note" style="margin:0">Zet boven elk team een regel met de teamnaam en een dubbele punt, bijvoorbeeld <b>Heren 1:</b>. Daaronder één speler per regel: volledige naam en handicap. Captain: zet <b>(c)</b> achter de naam. Plakken uit Excel (kolommen naam en handicap) werkt ook. De app maakt van elke naam voornaam plus eerste letter van de achternaam; bij dubbele namen komen er extra letters bij.</p>
+    <div id="nc-prev">${ncPreview()}</div>
+    <div class="row"><label class="f">Invoercode voor de captains (minstens 8 tekens)<input type="text" data-nc="edit" value="${esc(ui.nc.edit)}" autocomplete="off" spellcheck="false"></label>
+    <label class="f">Kijkcode (optioneel, minstens 6 tekens)<input type="text" data-nc="view" value="${esc(ui.nc.view)}" autocomplete="off" spellcheck="false" placeholder="Leeg = iedereen met de link kijkt mee"></label></div>
+    <div class="actions" style="padding:0"><button class="btn" data-create="1" ${busy}>Competitie aanmaken</button></div></div></section>`;
+  h+=`<p class="note" style="margin-top:12px">Na het aanmaken stel je bij <b>Instellingen</b> de speeldata, tijden en opstellingsregels in. De beheercode wijzig je in Supabase (SQL Editor) met <code>select tc_private.set_admin_code('…');</code></p>`;
+  return h;
+}
+function vLogin(){
+  const edit=!!ui.login&&!needCode, adm=!compId;
+  return `<section class="card" style="max-width:420px;margin:24px auto"><div class="card-h"><div class="teams">${adm?"Beheercode":edit?"Invoercode":"Toegangscode"}</div></div>
+    <form class="form" id="login" data-sig="${edit?1:0}${ui.badCode?1:0}"><p class="note" style="margin:0">${adm?"Vul de beheercode in.":edit?"Vul de invoercode van deze competitie in. Die hebben alleen de captains en de organisator.":"Deze competitie is afgeschermd. Vul de kijkcode of de invoercode in die je van de organisator hebt gekregen."}</p>
+    <label class="f">Code<input type="password" id="code-in" autocomplete="current-password" value=""></label>
+    ${ui.badCode?'<p class="note" style="margin:0;color:var(--bad)">Deze code klopt niet.</p>':""}
+    <div class="actions" style="padding:0"><button class="btn" type="submit">Openen</button>${edit||adm?'<button class="btn ghost" type="button" data-logincancel="1">Annuleren</button>':""}</div></form></section>`;
+}
 function render(){
-  renderTabs();
+  renderHead();
   const v=$("#view"), a=document.activeElement;
-  if(a&&v.contains(a)&&(a.tagName==="INPUT"||a.tagName==="SELECT")&&ui.tab==="instellingen"){render.pending=true;return;}
+  if(a&&v.contains(a)&&/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)&&(ui.tab==="instellingen"||ui.tab==="beheer")&&!(needCode||ui.login)){render.pending=true;return;}
   if(!configured){v.innerHTML=`<section class="card" style="max-width:560px;margin:24px auto"><div class="form"><b>De app is nog niet gekoppeld aan de database.</b><p class="note" style="margin:0">Vul in <code>config.js</code> het Project URL en de publishable key van je Supabase-project in (zie de installatiehandleiding).</p></div></section>`;return;}
-  if(notSet){v.innerHTML=`<section class="card" style="max-width:560px;margin:24px auto"><div class="form"><b>De toegangscodes zijn nog niet ingesteld.</b><p class="note" style="margin:0">Voer in Supabase de regel <code>select tc_private.set_codes(...)</code> uit (stap 3 van de installatiehandleiding) en ververs deze pagina.</p></div></section>`;return;}
+  if(!listLoaded){v.innerHTML=`<div class="empty">${listErr?"Geen verbinding met de database. De app probeert het opnieuw…":"De competities worden geladen…"}</div>`;return;}
   if(needCode||ui.login){const f=document.getElementById("login"),sig=(!!ui.login&&!needCode?"1":"0")+(ui.badCode?"1":"0");if(f&&f.dataset.sig===sig)return;v.innerHTML=vLogin();const i=document.getElementById("code-in");if(i)i.focus();return;}
-  if(!S.loaded.cfg){v.innerHTML=`<div class="empty">De competitie wordt geladen…</div>`;return;}
+  if(!compId){
+    if(isAdmin){v.innerHTML=vBeheer();return;}
+    v.innerHTML=`<section class="card" style="max-width:560px;margin:24px auto"><div class="form"><b>Er zijn nog geen competities.</b><p class="note" style="margin:0">${adminSet?"De organisator maakt ze aan via <b>Beheer</b> (knop bovenaan, met de beheercode).":"Stel eerst de beheercode in: voer in Supabase (SQL Editor) <code>select tc_private.set_admin_code('…');</code> uit en ververs deze pagina."}</p></div></section>`;return;}
+  if(ui.tab==="beheer"&&isAdmin){v.innerHTML=vBeheer();return;}
+  if(!S.loaded){v.innerHTML=`<div class="empty">De competitie wordt geladen…</div>`;return;}
   const y=window.scrollY;
   v.innerHTML={uitslagen:vUitslagen,opstelling:vOpstelling,stand:vStand,startlijst:vStartlijst,instellingen:vInstellingen}[ui.tab]();
   window.scrollTo(0,y);
+}
+
+/* ---------- competities wisselen en inloggen ---------- */
+async function loadList(){
+  try{const r=await rpc("tc_list",{p_code:store.admin||null}); comps=r.comps||[]; adminSet=!!r.adminSet;
+    if(store.admin&&!r.admin){store.admin="";persist();}
+    isAdmin=!!r.admin; listLoaded=true; listErr=false; return true;}
+  catch(e){listErr=true; return false;}
+}
+function resetComp(){S.cfg=null;S.rosters={};S.lineups={};S.results={};S.loaded=false;version=-1;lastDocs={};canWrite=false;needCode=false;
+  ui.sess=null;ui.team=1;ui.round=1;ui.login=false;ui.badCode=false;ui.paste=null;ui.confirmDel=null;ui.importDocs=null;PLAN=buildPlan(4,"beide");}
+function switchComp(id){
+  compId=id||null; resetComp();
+  try{if(compId)localStorage.setItem("tc.comp",compId);}catch(e){}
+  try{history.replaceState(null,"",location.pathname+(compId?"?c="+encodeURIComponent(compId):"")+location.hash);}catch(e){}
+  render(); if(compId) poll();
+}
+async function doLogin(code){
+  if(!code) return;
+  if(!compId){
+    try{await rpc("tc_admin",{p_code:code,p_action:"whoami",p_args:{}});store.admin=code;persist();await loadList();ui.login=false;ui.badCode=false;ui.tab="beheer";render();toast("Beheer staat aan.");}
+    catch(e){ui.badCode=e&&e.code==="toegang_geweigerd";if(!ui.badCode)toast("Geen verbinding.");render();}
+    return;
+  }
+  const wantEdit=!!ui.login&&!needCode, c=compId;
+  try{
+    const r=await rpc("tc_state",{p_comp:c,p_code:code,p_since:-1});
+    if(c!==compId) return;
+    if(r.admin){store.admin=code;persist();await loadList();}
+    else if(r.canEdit){store.edit[c]=code;persist();}
+    else if(wantEdit){ui.badCode=true;toast("Deze code geeft geen invoerrechten.");render();return;}
+    else {store.view[c]=code;persist();}
+    ui.login=false;ui.badCode=false;needCode=false;canWrite=!!r.canEdit;version=r.version;applyState(r.docs||{});render();
+    toast(r.admin?"Beheer staat aan voor alle competities.":r.canEdit?"Invoer staat aan.":"Welkom. Je kijkt mee.");
+  }catch(e){
+    if(e&&e.code==="toegang_geweigerd"){ui.badCode=true;render();}
+    else toast("Geen verbinding. Probeer het opnieuw.");
+  }
 }
 
 /* ---------- interactie ---------- */
 document.addEventListener("submit",e=>{
   if(e.target.id!=="login") return; e.preventDefault();
   e.target.dataset.sig="x";
-  const prev=authCode; authCode=document.getElementById("code-in").value.trim();
-  ui.expectEdit=!!ui.login&&!needCode; ui.prevCode=prev;
-  version=-1; poll(true);
+  doLogin(document.getElementById("code-in").value.trim());
 });
-document.addEventListener("click",e=>{
+document.addEventListener("input",e=>{
+  const el=e.target,d=el.dataset;
+  if(d.nc){ui.nc[d.nc]=el.value; if(d.nc==="text"){const p=$("#nc-prev");if(p)p.innerHTML=ncPreview();} return;}
+  if(d.cc){ui.cc[d.cc]=el.value;return;}
+  if(d.paste&&ui.paste){ui.paste.text=el.value;const p=$("#paste-prev");if(p)p.innerHTML=pastePreview();}
+});
+document.addEventListener("click",async e=>{
   const b=e.target.closest("button"); if(!b) return;
   const d=b.dataset;
   if(d.tab){ui.tab=d.tab;try{localStorage.setItem("tc.tab",d.tab);}catch(_){}window.scrollTo(0,0);render();return;}
   if(d.sess){ui.sess=+d.sess;render();return;}
   if(d.login){ui.login=true;ui.badCode=false;render();return;}
   if(d.logincancel){ui.login=false;ui.badCode=false;render();return;}
-  if(d.logout){authCode=ui.viewCode||"";try{localStorage.setItem("tc.code",authCode);}catch(_){}canWrite=false;version=-1;render();poll(true);toast("Invoeren gestopt. Je kijkt nu alleen mee.");return;}
-  if(d.export){const blob=new Blob([JSON.stringify({app:"training-competitie",exported:new Date().toISOString(),version,docs:lastDocs},null,1)],{type:"application/json"});const a=document.createElement("a");
-    a.href=URL.createObjectURL(blob);a.download="training-competitie-"+new Date().toISOString().slice(0,10)+".json";document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);return;}
+  if(d.logout){const wasAdmin=isAdmin;store.admin="";delete store.edit[compId];persist();isAdmin=false;canWrite=false;version=-1;
+    if(wasAdmin){await loadList();if(ui.tab==="beheer")ui.tab="uitslagen";}
+    render();if(compId)poll();toast(wasAdmin?"Beheer gestopt.":"Invoeren gestopt. Je kijkt nu alleen mee.");return;}
+  if(d.export){const blob=new Blob([JSON.stringify({app:"training-competitie",competitie:cfg().name,exported:new Date().toISOString(),version,docs:lastDocs},null,1)],{type:"application/json"});const a=document.createElement("a");
+    const slug=String(cfg().name||"competitie").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
+    a.href=URL.createObjectURL(blob);a.download=slug+"-"+new Date().toISOString().slice(0,10)+".json";document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);return;}
   if(d.team){ui.team=+d.team;render();return;}
   if(d.round){ui.round=+d.round;render();return;}
+  // beheer
+  if(isAdmin){
+    if(d.open){ui.tab="uitslagen";switchComp(d.open);return;}
+    if(d.copy){const url=location.origin+location.pathname+"?c="+encodeURIComponent(d.copy);
+      try{await navigator.clipboard.writeText(url);toast("Link gekopieerd.");}catch(_){toast(url);}return;}
+    if(d.codes){ui.codesFor=d.codes;ui.cc={edit:"",view:""};ui.delFor=null;render();return;}
+    if(d.ccno){ui.codesFor=null;ui.cc={edit:"",view:""};render();return;}
+    if(d.ccsave){try{await rpc("tc_admin",{p_code:store.admin,p_action:"codes",p_args:{comp:d.ccsave,edit:ui.cc.edit.trim(),view:ui.cc.view.trim()}});
+        ui.codesFor=null;ui.cc={edit:"",view:""};await loadList();if(d.ccsave===compId){delete store.edit[compId];delete store.view[compId];persist();version=-1;poll();}render();toast("Codes opgeslagen.");}
+      catch(err){toast(codeErr(err));}return;}
+    if(d.delc){ui.delFor=d.delc;ui.codesFor=null;render();return;}
+    if(d.delcno){ui.delFor=null;render();return;}
+    if(d.delcok){try{await rpc("tc_admin",{p_code:store.admin,p_action:"delete",p_args:{comp:d.delcok}});ui.delFor=null;delete store.edit[d.delcok];delete store.view[d.delcok];persist();
+        await loadList();toast("Competitie verwijderd.");if(d.delcok===compId){switchComp(comps.length?comps[0].id:null);ui.tab="beheer";render();}else render();}
+      catch(err){toast(codeErr(err));}return;}
+    if(d.create){await createComp();return;}
+  }
   if(!canWrite) return;
   if(d.impno){ui.importDocs=null;render();return;}
-  if(d.impok){const docs=ui.importDocs;ui.importDocs=null;rpc("tc_import",{p_code:authCode,p_docs:docs}).then(()=>{toast("Gegevens teruggezet.");version=-1;poll(true);}).catch(err=>toast(err&&err.code==="toegang_geweigerd"?"Terugzetten geweigerd: geen invoerrechten.":"Terugzetten mislukt."));render();return;}
+  if(d.impok){const docs=ui.importDocs;ui.importDocs=null;rpc("tc_import",{p_comp:compId,p_code:authCode(),p_docs:docs}).then(()=>{toast("Gegevens teruggezet.");version=-1;poll();}).catch(err=>toast(err&&err.code==="toegang_geweigerd"?"Terugzetten geweigerd: geen invoerrechten.":"Terugzetten mislukt."));render();return;}
   if(d.step){const [m,du,side,dl]=d.step.split("|");const k=`m${m}d${du}`;const r=Object.assign({},S.results[k]||{});
     const cur=num(r[side]); let nv=cur==null?(+dl>0?1:0):cur+ +dl; nv=Math.max(0,Math.min(9,nv)); r[side]=nv; S.results[k]=r; saveResult(k); render(); return;}
   if(d.clear){const [m,du]=d.clear.split("|");const k=`m${m}d${du}`;S.results[k]={};saveResult(k);render();return;}
   if(d.sd){const [m,w]=d.sd.split("|");const k=`m${m}sd`;const cur=(S.results[k]||{}).w;S.results[k]={w:cur===w?"":w};saveResult(k);render();return;}
   if(d.assign){const [pid,v]=d.assign.split("|");const key=`t${ui.team}r${ui.round}`;const cur=S.lineups[key]||{assign:{}};const as=Object.assign({},cur.assign);
     if(v)as[pid]=v;else delete as[pid];S.lineups[key]={assign:as};saveLineup(ui.team,ui.round);render();return;}
-  if(d.add){const t=+d.add;const r=(S.rosters[t]||[]).slice();if(r.length>=8)return;r.push({id:Math.random().toString(36).slice(2,9),name:"",hcp:""});S.rosters[t]=r;saveRoster(t);render();
+  if(d.add){const t=+d.add;const r=(S.rosters[t]||[]).slice();if(r.length>=MAXP)return;r.push({id:rid(),name:"",hcp:""});S.rosters[t]=r;saveRoster(t);render();
     const last=r[r.length-1];setTimeout(()=>{const el=document.getElementById("p-n-"+last.id);if(el)el.focus();},0);return;}
+  if(d.pastetoggle){ui.paste={t:+d.pastetoggle,text:""};render();setTimeout(()=>{const el=document.getElementById("paste-"+d.pastetoggle);if(el)el.focus();},0);return;}
+  if(d.pasteno){ui.paste=null;render();return;}
+  if(d.pasteadd){const t=+d.pasteadd;const parsed=parseTeams(ui.paste?ui.paste.text:"",false);if(!parsed.length){toast("Er is niets geplakt.");return;}
+    const an=anonTeams(parsed,allNames())[0];const r=(S.rosters[t]||[]).slice();const room=MAXP-r.length;
+    an.players.slice(0,room).forEach(p=>r.push({id:rid(),name:p.name,hcp:p.hcp==null?"":p.hcp}));S.rosters[t]=r;saveRoster(t);ui.paste=null;render();
+    toast(`${Math.min(room,an.players.length)} speler(s) toegevoegd aan ${tname(t)}.`);return;}
   if(d.sort){const t=+d.sort;const r=(S.rosters[t]||[]).slice();r.sort((a,b)=>{const x=num(a.hcp),y=num(b.hcp);return (x==null?99:x)-(y==null?99:y);});S.rosters[t]=r;saveRoster(t);render();toast("Spelers gesorteerd op handicap.");return;}
   if(d.del){ui.confirmDel=d.del;render();return;}
   if(d.delno){ui.confirmDel=null;render();return;}
   if(d.delok){const [t,pid]=d.delok.split("|");S.rosters[t]=(S.rosters[t]||[]).filter(p=>p.id!==pid);ui.confirmDel=null;saveRoster(+t);
-    for(let s=1;s<=4;s++){const k=`t${t}r${s}`;if(S.lineups[k]&&S.lineups[k].assign[pid]){const as=Object.assign({},S.lineups[k].assign);delete as[pid];S.lineups[k]={assign:as};saveLineup(+t,s);}}
+    for(let s=1;s<=12;s++){const k=`t${t}r${s}`;if(S.lineups[k]&&S.lineups[k].assign[pid]){const as=Object.assign({},S.lineups[k].assign);delete as[pid];S.lineups[k]={assign:as};saveLineup(+t,s);}}
     render();return;}
+  if(d.addteam){if(anyResults()||NT()>=MAXT)return;const c=S.cfg;c.teams.push({name:"Team "+(c.teams.length+1),rule:"vrij"});c.sched=[];setCfg(c);saveCfg();render();return;}
+  if(d.delteam){if(anyResults()||NT()<=2)return;const c=S.cfg;const n=c.teams.length;c.teams.pop();c.sched=[];setCfg(c);saveCfg();S.rosters[n]=[];saveRoster(n);render();toast("Laatste team verwijderd.");return;}
 });
+function codeErr(err){const c=err&&err.code;return ({invoercode_te_kort:"De invoercode moet minstens 8 tekens hebben.",kijkcode_te_kort:"De kijkcode moet minstens 6 tekens hebben (of leeg laten).",
+  codes_gelijk:"Invoercode en kijkcode moeten verschillen.",zelfde_als_beheercode:"Gebruik voor de competitie een andere code dan de beheercode.",toegang_geweigerd:"Geweigerd: de beheercode klopt niet (meer).",
+  ongeldige_gegevens:"De gegevens zijn ongeldig.",te_veel_competities:"Maximaal 50 competities.",onbekende_competitie:"Deze competitie bestaat niet meer."})[c]||"Opslaan mislukt. Controleer je internetverbinding.";}
+async function createComp(){
+  const name=ui.nc.name.trim(), parsed=parseTeams(ui.nc.text,true), edit=ui.nc.edit.trim(), view=ui.nc.view.trim();
+  if(!name){toast("Vul een naam voor de competitie in.");return;}
+  if(parsed.length<2||parsed.length>MAXT){toast(`Een competitie heeft 2 tot ${MAXT} teams (nu ${parsed.length}).`);return;}
+  if(edit.length<8){toast("De invoercode moet minstens 8 tekens hebben.");return;}
+  if(view&&view.length<6){toast("De kijkcode moet minstens 6 tekens hebben (of leeg laten).");return;}
+  if(view&&view===edit){toast("Invoercode en kijkcode moeten verschillen.");return;}
+  const teams=anonTeams(parsed,[]);
+  const c=normCfg({name,teams:teams.map(t=>({name:t.name,rule:"vrij"}))});
+  const docs={"config/main":c};
+  teams.forEach((t,i)=>{docs["rosters/t"+(i+1)]={players:t.players.slice(0,MAXP).map(p=>({id:rid(),name:p.name,hcp:p.hcp==null?"":p.hcp}))};});
+  ui.busy=true;render();
+  try{const r=await rpc("tc_admin",{p_code:store.admin,p_action:"create",p_args:{docs,edit,view}});
+    ui.nc={name:"",text:"",edit:"",view:""};ui.busy=false;await loadList();ui.tab="instellingen";switchComp(r.id);
+    toast("Competitie aangemaakt. Vul nu de speeldata en tijden in.");}
+  catch(err){ui.busy=false;render();toast(codeErr(err));}
+}
 document.addEventListener("change",e=>{
   const el=e.target, d=el.dataset;
+  if(el.id==="compsel"){ui.paste=null;switchComp(el.value);return;}
+  if(d.nc||d.cc||d.paste) return;
   if(el.id==="imp-file"){const f=el.files&&el.files[0]; if(!f) return; f.text().then(t=>{let j;try{j=JSON.parse(t);}catch(_){toast("Dit is geen geldig exportbestand.");return;}
     const docs=j&&j.docs?j.docs:j; if(!docs||typeof docs!=="object"||!docs["config/main"]){toast("Dit is geen exportbestand van de Training Competitie.");return;}
     ui.importDocs=docs;ui.importName=f.name;render();});el.value="";return;}
-  if(!canWrite) return;
-  if(!S.cfg) S.cfg=defCfg();
+  if(!canWrite||!S.cfg) return;
   const c=S.cfg;
-  if(d.cfg){c[d.cfg]=d.cfg==="interval"?(num(el.value)||10):el.value;saveCfg();}
-  else if(d.tname!=null){c.teams[+d.tname].name=el.value.trim()||("Heren "+(+d.tname+1));saveCfg();}
+  if(d.cfg){c[d.cfg]=d.cfg==="interval"?(num(el.value)||10):el.value; if(d.cfg==="finals"){if(finalResults())return; c.sched=c.sched.slice(0,PLAN.poule);} setCfg(c);saveCfg();}
+  else if(d.sessL!=null){c.sessions[+d.sessL].label=el.value.trim()||("Ronde "+(+d.sessL+1));saveCfg();}
+  else if(d.sessD!=null){c.sessions[+d.sessD].date=el.value;saveCfg();}
+  else if(d.tname!=null){c.teams[+d.tname].name=el.value.trim()||("Team "+(+d.tname+1));saveCfg();}
   else if(d.trule!=null){c.teams[+d.trule].rule=el.value;saveCfg();}
   else if(d.sched){const [m,f]=d.sched.split("|");c.sched[m-1]=Object.assign({},c.sched[m-1],{[f]:f==="tee"?+el.value:el.value});saveCfg();}
   else if(d.po){c.playoff=Object.assign({},c.playoff,{[d.po]:el.value?+el.value:""});saveCfg();}
-  else if(d.pl){const [t,pid,f]=d.pl.split("|");S.rosters[t]=(S.rosters[t]||[]).map(p=>p.id!==pid?p:Object.assign({},p,{[f]:f==="hcp"?(num(el.value)??""):el.value.trim()}));saveRoster(+t);}
+  else if(d.pl){const [t,pid,f]=d.pl.split("|");let v=el.value.trim();
+    if(f==="name"&&v&&looksFull(v)){const nv=anonNames([v],allNames(pid))[0];if(nv!==v){el.value=nv;toast(`Opgeslagen als ${nv}.`);}v=nv;}
+    S.rosters[t]=(S.rosters[t]||[]).map(p=>p.id!==pid?p:Object.assign({},p,{[f]:f==="hcp"?(toHcp(v)??""):v}));saveRoster(+t);}
   else return;
   setTimeout(render,0);
 });
-document.addEventListener("focusout",()=>{setTimeout(()=>{if(render.pending){const a=document.activeElement;if(!(a&&$("#view").contains(a)&&(a.tagName==="INPUT"||a.tagName==="SELECT"))){render.pending=false;render();}}},0);});
+document.addEventListener("focusout",()=>{setTimeout(()=>{if(render.pending){const a=document.activeElement;if(!(a&&$("#view").contains(a)&&/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName))){render.pending=false;render();}}},0);});
 
-/* ---------- start ---------- */
+/* ---------- gegevens ophalen ---------- */
 function applyState(docs){
   lastDocs=docs;
-  const keep=(p,cur)=>pending.has(p)&&cur;
-  if(!keep("config/main",S.cfg)) S.cfg=docs["config/main"]?Object.assign(defCfg(),JSON.parse(JSON.stringify(docs["config/main"]))):defCfg();
+  const keep=(p,cur)=>pending.has(compId+"|"+p)&&cur;
+  setCfg(keep("config/main",S.cfg)?S.cfg:docs["config/main"]);
   const R={},L={},X={};
   for(const [p,v] of Object.entries(docs)){
     const [col,id]=p.split("/");
@@ -482,39 +788,51 @@ function applyState(docs){
     else if(col==="lineups"){L[id]=keep(p,S.lineups[id])?S.lineups[id]:{assign:Object.assign({},v.assign||{})};}
     else if(col==="results"){X[id]=keep(p,S.results[id])?S.results[id]:Object.assign({},v);}
   }
-  for(const p of pending){const [col,id]=p.split("/");
+  for(const key of pending){const [cc,p]=key.split("|");if(cc!==compId)continue;const [col,id]=p.split("/");
     if(col==="rosters"&&!R[+id.slice(1)]&&S.rosters[+id.slice(1)])R[+id.slice(1)]=S.rosters[+id.slice(1)];
     if(col==="lineups"&&!L[id]&&S.lineups[id])L[id]=S.lineups[id];
     if(col==="results"&&!X[id]&&S.results[id])X[id]=S.results[id];}
-  S.rosters=R;S.lineups=L;S.results=X;Object.keys(S.loaded).forEach(k=>S.loaded[k]=true);
+  S.rosters=R;S.lineups=L;S.results=X;S.loaded=true;
 }
 let pollTimer=null;
 async function poll(){
   clearTimeout(pollTimer);
-  if(configured){
+  const c=compId;
+  if(configured&&c){
     try{
-      const res=await rpc("tc_state",{p_code:authCode,p_since:version});
-      const changedAuth=needCode||canWrite!==!!res.canEdit||offline;
-      offline=false; needCode=false; notSet=false; canWrite=!!res.canEdit;
-      if(ui.expectEdit){ui.expectEdit=false;
-        if(!canWrite){authCode=ui.prevCode||"";toast("Deze code geeft geen invoerrechten.");ui.badCode=true;version=-1;}
-        else{ui.login=false;ui.badCode=false;toast("Invoer staat aan.");}
-        render();}
-      if(!canWrite&&authCode) ui.viewCode=authCode;
-      try{localStorage.setItem("tc.code",authCode);}catch(_){}
+      const code=authCode();
+      const res=await rpc("tc_state",{p_comp:c,p_code:code,p_since:version});
+      if(c!==compId) return;
+      const changedAuth=needCode||canWrite!==!!res.canEdit||offline||isAdmin!==!!res.admin;
+      offline=false; needCode=false;
+      if(store.admin&&!res.admin){store.admin="";persist();await loadList();}
+      if(!res.canEdit&&store.edit[c]){delete store.edit[c];persist();}
+      if(res.canEdit&&!res.admin&&!store.edit[c]&&store.view[c]===code){store.edit[c]=code;delete store.view[c];persist();}
+      canWrite=!!res.canEdit;
       if(!res.unchanged){version=res.version;applyState(res.docs||{});render();} else if(changedAuth) render();
     }catch(err){
+      if(c!==compId) return;
       if(err&&err.code==="toegang_geweigerd"){
-        if(ui.expectEdit){ui.expectEdit=false;authCode=ui.prevCode||"";ui.badCode=true;render();}
-        else{ui.badCode=!!authCode;needCode=true;canWrite=false;render();}
-      }else if(err&&err.code==="niet_ingesteld"){notSet=true;render();}
+        if(store.view[c]){delete store.view[c];persist();}
+        if(store.admin){store.admin="";persist();await loadList();}
+        ui.badCode=false;needCode=true;canWrite=false;render();
+      }else if(err&&err.code==="onbekende_competitie"){await loadList();switchComp(comps.length?comps[0].id:null);return;}
       else if(!offline){offline=true;render();}
     }
   }
-  pollTimer=setTimeout(poll,document.hidden?15000:3000);
+  if(c===compId) pollTimer=setTimeout(poll,document.hidden?15000:3000);
 }
-document.addEventListener("visibilitychange",()=>{if(!document.hidden)poll();});
-render(); poll();
+document.addEventListener("visibilitychange",()=>{if(!document.hidden&&compId)poll();});
+
+async function start(){
+  render();
+  if(!configured) return;
+  if(!await loadList()){render();setTimeout(start,5000);return;}
+  let want=null; try{want=new URLSearchParams(location.search).get("c")||localStorage.getItem("tc.comp");}catch(e){}
+  const id=comps.some(x=>x.id===want)?want:(comps[0]&&comps[0].id)||null;
+  switchComp(id);
+}
+start();
 })();
 </script>
 
