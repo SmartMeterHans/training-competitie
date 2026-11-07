@@ -386,7 +386,7 @@ function vInstellingen(){
 function vLogin(){
   const edit=!!ui.login&&!needCode;
   return `<section class="card" style="max-width:420px;margin:24px auto"><div class="card-h"><div class="teams">${edit?"Invoercode":"Toegangscode"}</div></div>
-    <form class="form" id="login"><p class="note" style="margin:0">${edit?"Vul de invoercode in. Die hebben alleen de captains en de organisator.":"Deze competitie is afgeschermd. Vul de kijkcode of de invoercode in die je van de organisator hebt gekregen."}</p>
+    <form class="form" id="login" data-sig="${edit?1:0}${ui.badCode?1:0}"><p class="note" style="margin:0">${edit?"Vul de invoercode in. Die hebben alleen de captains en de organisator.":"Deze competitie is afgeschermd. Vul de kijkcode of de invoercode in die je van de organisator hebt gekregen."}</p>
     <label class="f">Code<input type="password" id="code-in" autocomplete="current-password" value=""></label>
     ${ui.badCode?'<p class="note" style="margin:0;color:var(--bad)">Deze code klopt niet.</p>':""}
     <div class="actions" style="padding:0"><button class="btn" type="submit">Openen</button>${edit?'<button class="btn ghost" type="button" data-logincancel="1">Annuleren</button>':""}</div></form></section>`;
@@ -406,7 +406,7 @@ function render(){
   if(a&&v.contains(a)&&(a.tagName==="INPUT"||a.tagName==="SELECT")&&ui.tab==="instellingen"){render.pending=true;return;}
   if(!configured){v.innerHTML=`<section class="card" style="max-width:560px;margin:24px auto"><div class="form"><b>De app is nog niet gekoppeld aan de database.</b><p class="note" style="margin:0">Vul in <code>config.js</code> het Project URL en de publishable key van je Supabase-project in (zie de installatiehandleiding).</p></div></section>`;return;}
   if(notSet){v.innerHTML=`<section class="card" style="max-width:560px;margin:24px auto"><div class="form"><b>De toegangscodes zijn nog niet ingesteld.</b><p class="note" style="margin:0">Voer in Supabase de regel <code>select tc_private.set_codes(...)</code> uit (stap 3 van de installatiehandleiding) en ververs deze pagina.</p></div></section>`;return;}
-  if(needCode||ui.login){v.innerHTML=vLogin();const i=document.getElementById("code-in");if(i)i.focus();return;}
+  if(needCode||ui.login){const f=document.getElementById("login"),sig=(!!ui.login&&!needCode?"1":"0")+(ui.badCode?"1":"0");if(f&&f.dataset.sig===sig)return;v.innerHTML=vLogin();const i=document.getElementById("code-in");if(i)i.focus();return;}
   if(!S.loaded.cfg){v.innerHTML=`<div class="empty">De competitie wordt geladen…</div>`;return;}
   const y=window.scrollY;
   v.innerHTML={uitslagen:vUitslagen,opstelling:vOpstelling,stand:vStand,startlijst:vStartlijst,instellingen:vInstellingen}[ui.tab]();
@@ -416,6 +416,7 @@ function render(){
 /* ---------- interactie ---------- */
 document.addEventListener("submit",e=>{
   if(e.target.id!=="login") return; e.preventDefault();
+  e.target.dataset.sig="x";
   const prev=authCode; authCode=document.getElementById("code-in").value.trim();
   ui.expectEdit=!!ui.login&&!needCode; ui.prevCode=prev;
   version=-1; poll(true);
@@ -493,12 +494,12 @@ async function poll(){
   if(configured){
     try{
       const res=await rpc("tc_state",{p_code:authCode,p_since:version});
-      const changedAuth=needCode||ui.login||canWrite!==!!res.canEdit||offline;
+      const changedAuth=needCode||canWrite!==!!res.canEdit||offline;
       offline=false; needCode=false; notSet=false; canWrite=!!res.canEdit;
       if(ui.expectEdit){ui.expectEdit=false;
         if(!canWrite){authCode=ui.prevCode||"";toast("Deze code geeft geen invoerrechten.");ui.badCode=true;version=-1;}
-        else{ui.login=false;ui.badCode=false;toast("Invoer staat aan.");}}
-      else ui.login=false;
+        else{ui.login=false;ui.badCode=false;toast("Invoer staat aan.");}
+        render();}
       if(!canWrite&&authCode) ui.viewCode=authCode;
       try{localStorage.setItem("tc.code",authCode);}catch(_){}
       if(!res.unchanged){version=res.version;applyState(res.docs||{});render();} else if(changedAuth) render();
