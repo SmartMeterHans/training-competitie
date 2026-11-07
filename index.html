@@ -123,6 +123,9 @@ textarea{width:100%;min-width:0;padding:8px 10px;border:1px solid var(--line);bo
 .sbar span{display:inline-flex;flex-wrap:wrap;align-items:center;gap:8px}
 .sbar.bezig{border-color:var(--gold);background:var(--gold-soft)}
 .sbar.klaar{border-color:var(--good);background:var(--green-soft)}
+details.arch{padding:10px 14px;margin-bottom:10px}
+details.arch summary{cursor:pointer}
+details.arch .tbl-wrap{margin-top:8px}
 code{font-size:.85em;background:var(--surface2);padding:1px 4px;border-radius:4px}
 </style>
 </head>
@@ -278,7 +281,7 @@ function previewHtml(teams,opts){
 }
 
 /* ---------- toestand ---------- */
-const S={cfg:null,rosters:{},lineups:{},results:{},loaded:false};
+const S={cfg:null,rosters:{},lineups:{},results:{},archives:[],loaded:false};
 let PLAN=buildPlan(4,"beide");
 let canWrite=false, offline=false, isAdmin=false, adminSet=true, comps=[], compId=null, listLoaded=false, listErr=false;
 const ui={tab:"uitslagen",sess:null,team:1,round:1,confirmDel:null,nc:{name:"",text:"",edit:"",view:""},cc:{edit:"",view:""},codesFor:null,delFor:null,paste:null,busy:false};
@@ -412,7 +415,7 @@ function renderHead(){
   const c=cfg(), name=compId?(S.cfg?c.name:((comps.find(x=>x.id===compId)||{}).name||"")):"Wintercompetities";
   $("#title").textContent=name||"Competitie"; document.title=name||"Competities";
   const ds=[...new Set(c.sessions.map(s=>s.date).filter(Boolean))].sort(); const per=ds.length?(ds.length>1?fmtDate(ds[0])+" t/m "+fmtDate(ds[ds.length-1]):fmtDate(ds[0])):"";
-  $("#subtitle").textContent=compId&&S.cfg?([c.baan,per].filter(Boolean).join(" · ")||`${NT()} teams · greensome over 9 holes`):"";
+  $("#subtitle").textContent=compId&&S.cfg?([(c.round||1)>1?"Competitieronde "+c.round:"",c.baan,per].filter(Boolean).join(" · ")||`${NT()} teams · greensome over 9 holes`):"";
 }
 function banner(){
   if(offline) return `<div class="banner">Geen verbinding. De app probeert het automatisch opnieuw; wat je nu invoert wordt mogelijk niet bewaard.</div>`;
@@ -435,12 +438,14 @@ function sessBar(s){
   const st=sessStatus(s), x=cfg().sessions[s-1]||{}, ms=PLAN.matches.filter(m=>m.s===s);
   let n=0;for(const mt of ms)n+=tot(mt.m).n; const tot3=ms.length*3;
   let h=`<div class="sbar ${st}">`;
-  if(st==="open") h+=`<span><b>Nog niet gestart.</b> ${n?n+" van "+tot3+" partijen ingevuld.":""}</span>${canWrite?`<button class="btn" data-sstart="${s}">Speeldag starten</button>`:""}`;
+  if(st==="open") h+=`<span><b>Nog niet gestart.</b> ${n?n+" van "+tot3+" partijen ingevuld.":""}</span><button class="btn" data-sstart="${s}">${canWrite?"Speeldag starten":"Inloggen om te starten"}</button>`;
   else if(st==="bezig"){
     h+=`<span><b>Bezig</b> sinds ${fmtDate(isoDate(x.start))} ${hhmm(x.start)} · ${n} van ${tot3} partijen ingevuld.</span>`;
     if(canWrite) h+=ui.confirmEnd===s?`<span>${n<tot3?`Nog ${tot3-n} partij(en) zonder uitslag. `:""}Afronden?<button class="btn" data-send="${s}">Ja, afronden</button><button class="btn ghost" data-sendno="1">Nee</button></span>`:`<button class="btn" data-sendask="${s}">Speeldag afronden</button>`;
   } else h+=`<span><b>Afgerond</b> op ${fmtDate(isoDate(x.end))} ${hhmm(x.end)}. De uitslagen staan vast.</span>${canWrite?`<button class="linkbtn" data-sreopen="${s}">heropenen</button>`:""}`;
-  return h+`</div>`;
+  h+=`</div>`;
+  if(st==="klaar"&&s===PLAN.nSess&&isAdmin) h+=`<div class="sbar"><span><b>De competitie is klaar.</b> Dezelfde competitie nog een keer spelen?</span><button class="btn" data-nrgo="1">Nieuwe competitieronde</button></div>`;
+  return h;
 }
 function vUitslagen(){
   const stand=standings(), ss=[];for(let s=1;s<=PLAN.nSess;s++)ss.push(s);
@@ -527,7 +532,40 @@ function vStand(){
   }
   h+=`<h2>Eindrangschikking</h2><div class="card tbl-wrap"><table><tbody>`;
   for(const [p,t,lab] of finalRanking(st)) h+=`<tr><td class="rank">${p}</td><td><b>${t?esc(tname(t)):"<span class='cap'>nog niet bekend</span>"}</b></td><td class="cap">${lab}</td></tr>`;
-  return h+`</tbody></table></div>`;
+  h+=`</tbody></table></div>`;
+  if(isAdmin){
+    h+=`<h2>Nieuwe competitieronde</h2><section class="card"><div class="form">`;
+    if(!ui.newRound) h+=`<p class="note" style="margin:0">Speel dezelfde competitie nog een keer: teams, spelers, regels en tijden blijven, de uitslagen en opstellingen beginnen opnieuw. De huidige stand en uitslagen worden bewaard en blijven hieronder zichtbaar. Link en codes blijven hetzelfde.</p><div class="actions" style="padding:0"><button class="btn ghost" data-nrgo="1">Nieuwe competitieronde starten…</button></div>`;
+    else h+=`<p class="note" style="margin:0"><b>Weet je het zeker?</b> Competitieronde ${cfg().round||1} wordt afgesloten en bewaard; de uitslagen en opstellingen worden leeggemaakt en alle speeldagen beginnen opnieuw (zonder datum).${st.complete?"":" Let op: de poule is nog niet compleet."}</p><div class="actions" style="padding:0"><button class="btn" data-nrok="1" ${ui.busy?"disabled":""}>Ja, start competitieronde ${(cfg().round||1)+1}</button><button class="btn ghost" data-nrno="1">Annuleren</button></div>`;
+    h+=`</div></section>`;
+  }
+  if(S.archives.length){
+    h+=`<h2>Eerdere competitierondes</h2>`;
+    for(const a of S.archives){
+      h+=`<details class="card arch"><summary><b>Competitieronde ${a.round}</b> <span class="cap">${esc(a.period||"")}</span>${a.ranking&&a.ranking[0]&&a.ranking[0][1]?` · kampioen: <b>${esc(a.ranking[0][1])}</b>`:""}</summary>
+        <div class="tbl-wrap"><table><thead><tr><th>#</th><th>Team</th><th class="num">Punten</th><th class="num">Holes</th><th></th></tr></thead><tbody>${(a.ranking||[]).map(r=>{const pr=(a.poule||[]).find(x=>x.team===r[1])||{};return `<tr><td class="rank">${r[0]}</td><td><b>${esc(r[1]||"–")}</b></td><td class="num">${pr.pts!=null?nl(pr.pts):""}</td><td class="num">${pr.holes!=null?pr.holes:""}</td><td class="cap">${esc(r[2]||"")}</td></tr>`;}).join("")}</tbody></table></div></details>`;
+    }
+  }
+  return h;
+}
+async function newRound(){
+  if(!isAdmin||!S.cfg) return;
+  const st=standings(), c=normCfg(S.cfg), n=c.round||1;
+  const ds=[...new Set(c.sessions.map(x=>x.date).filter(Boolean))].sort();
+  const arch={round:n,name:c.name,archivedAt:new Date().toISOString(),period:ds.length?(ds.length>1?fmtDate(ds[0])+" t/m "+fmtDate(ds[ds.length-1]):fmtDate(ds[0])):"",
+    ranking:finalRanking(st).map(([p,t,lab])=>[p,t?tname(t):"",lab]),
+    poule:st.rows.map(r=>({team:tname(r.t),pts:r.pts,holes:r.holes,W:r.W,G:r.G,V:r.V})),
+    sessions:c.sessions.map(x=>({label:x.label,date:x.date})),results:S.results,
+    teams:c.teams.map((t,i)=>({name:t.name,players:(S.rosters[i+1]||[]).map(p=>({id:p.id,name:p.name}))}))};
+  if(JSON.stringify(arch).length>60000){delete arch.results;}
+  const docs={};
+  for(const [p,v] of Object.entries(lastDocs)) if(p.startsWith("archive/")||p.startsWith("rosters/")) docs[p]=v;
+  docs["archive/r"+n]=arch;
+  c.round=n+1; c.playoff={}; c.sessions=c.sessions.map(x=>({label:x.label,date:"",start:"",end:""}));
+  docs["config/main"]=c;
+  ui.busy=true;render();
+  try{await rpc("tc_import",{p_comp:compId,p_code:authCode(),p_docs:docs});ui.busy=false;ui.newRound=false;ui.sess=null;version=-1;await poll();toast(`Competitieronde ${n+1} gestart. Ronde ${n} is bewaard bij Stand.`);}
+  catch(err){ui.busy=false;render();toast(err&&err.code==="ongeldige_gegevens"?"Mislukt: de database moet eerst worden bijgewerkt (archief).":codeErr(err));}
 }
 function vStartlijst(){
   const st=standings(); let h=banner();
@@ -614,7 +652,7 @@ function vBeheer(){
     for(const c of comps){
       h+=`<tr><td><b>${esc(c.name)}</b>${c.id===compId?' <span class="pill ok">open</span>':""}<br><span class="cap">${esc(link(c.id))}</span></td><td class="num">${c.teams}</td>
         <td>${c.hasEdit?"ingesteld":'<span class="pill bad">ontbreekt</span>'}</td><td>${c.hasView?"ingesteld":'<span class="cap">geen: iedereen met de link kijkt mee</span>'}</td>
-        <td style="white-space:nowrap">${c.id===compId?"":`<button class="linkbtn" data-open="${esc(c.id)}">openen</button> · `}<button class="linkbtn" data-copy="${esc(c.id)}">link kopiëren</button> · <button class="linkbtn" data-rename="${esc(c.id)}">naam wijzigen</button> · <button class="linkbtn" data-codes="${esc(c.id)}">codes wijzigen</button> · <button class="linkbtn" data-delc="${esc(c.id)}">verwijderen</button></td></tr>`;
+        <td style="white-space:nowrap">${c.id===compId?"":`<button class="linkbtn" data-open="${esc(c.id)}">openen</button> · `}<button class="linkbtn" data-copy="${esc(c.id)}">link kopiëren</button> · <button class="linkbtn" data-newround="${esc(c.id)}">nieuwe competitieronde</button> · <button class="linkbtn" data-rename="${esc(c.id)}">naam wijzigen</button> · <button class="linkbtn" data-codes="${esc(c.id)}">codes wijzigen</button> · <button class="linkbtn" data-delc="${esc(c.id)}">verwijderen</button></td></tr>`;
       if(ui.renFor===c.id) h+=`<tr><td colspan="5"><div class="form" style="padding:4px 0"><label class="f">Nieuwe naam<input type="text" data-rn="1" value="${esc(ui.rn)}" autocomplete="off"></label>
         <div class="actions" style="padding:0"><button class="btn" data-rnsave="${esc(c.id)}">Naam opslaan</button><button class="btn ghost" data-rnno="1">Annuleren</button></div></div></td></tr>`;
       if(ui.codesFor===c.id) h+=`<tr><td colspan="5"><div class="form" style="padding:4px 0"><div class="row">
@@ -675,7 +713,7 @@ async function loadList(){
     isAdmin=!!r.admin; listLoaded=true; listErr=false; return true;}
   catch(e){listErr=true; return false;}
 }
-function resetComp(){S.cfg=null;S.rosters={};S.lineups={};S.results={};S.loaded=false;version=-1;lastDocs={};canWrite=false;needCode=false;
+function resetComp(){S.cfg=null;S.rosters={};S.lineups={};S.results={};S.archives=[];ui.newRound=false;S.loaded=false;version=-1;lastDocs={};canWrite=false;needCode=false;
   ui.sess=null;ui.team=1;ui.round=1;ui.login=false;ui.badCode=false;ui.paste=null;ui.confirmDel=null;ui.importDocs=null;PLAN=buildPlan(4,"beide");}
 function switchComp(id){
   compId=id||null; resetComp();
@@ -763,8 +801,13 @@ document.addEventListener("click",async e=>{
       catch(err){toast(codeErr(err));}return;}
     if(d.create){await createComp();return;}
     if(d.impcancel){ui.imp=null;render();return;}
+    if(d.nrgo){ui.newRound=true;ui.tab="stand";render();setTimeout(()=>{const el=document.querySelector("[data-nrok]");if(el)el.scrollIntoView({block:"center"});},0);return;}
+    if(d.nrno){ui.newRound=false;render();return;}
+    if(d.nrok){await newRound();return;}
+    if(d.newround){if(d.newround!==compId)switchComp(d.newround);ui.tab="stand";ui.newRound=true;render();return;}
     if(d.impgo){await runImport();return;}
   }
+  if(d.sstart&&!canWrite){ui.login=true;ui.badCode=false;render();return;}
   if(!canWrite) return;
   if(d.impno){ui.importDocs=null;render();return;}
   if(d.impok){const docs=ui.importDocs;ui.importDocs=null;rpc("tc_import",{p_comp:compId,p_code:authCode(),p_docs:docs}).then(()=>{toast("Gegevens teruggezet.");version=-1;poll();}).catch(err=>toast(err&&err.code==="toegang_geweigerd"?"Terugzetten geweigerd: geen invoerrechten.":"Terugzetten mislukt."));render();return;}
@@ -971,18 +1014,19 @@ function applyState(docs){
   lastDocs=docs;
   const keep=(p,cur)=>pending.has(compId+"|"+p)&&cur;
   setCfg(keep("config/main",S.cfg)?S.cfg:docs["config/main"]);
-  const R={},L={},X={};
+  const R={},L={},X={},A=[];
   for(const [p,v] of Object.entries(docs)){
     const [col,id]=p.split("/");
     if(col==="rosters"){const t=+id.slice(1);R[t]=keep(p,S.rosters[t])?S.rosters[t]:(v.players||[]).map(x=>Object.assign({},x));}
     else if(col==="lineups"){L[id]=keep(p,S.lineups[id])?S.lineups[id]:{assign:Object.assign({},v.assign||{})};}
     else if(col==="results"){X[id]=keep(p,S.results[id])?S.results[id]:Object.assign({},v);}
+    else if(col==="archive"){A.push(Object.assign({key:id},v));}
   }
   for(const key of pending){const [cc,p]=key.split("|");if(cc!==compId)continue;const [col,id]=p.split("/");
     if(col==="rosters"&&!R[+id.slice(1)]&&S.rosters[+id.slice(1)])R[+id.slice(1)]=S.rosters[+id.slice(1)];
     if(col==="lineups"&&!L[id]&&S.lineups[id])L[id]=S.lineups[id];
     if(col==="results"&&!X[id]&&S.results[id])X[id]=S.results[id];}
-  S.rosters=R;S.lineups=L;S.results=X;S.loaded=true;
+  S.rosters=R;S.lineups=L;S.results=X;S.archives=A.sort((a,b)=>(b.round||0)-(a.round||0));S.loaded=true;
 }
 let pollTimer=null;
 async function poll(){
