@@ -606,6 +606,10 @@ function vBeheer(){
     h+=`</tbody></table></div>`;
   }
   const busy=ui.busy?"disabled":"";
+  h+=`<h2>Importeren uit Excel of CSV</h2><section class="card"><div class="form">
+    <p class="note" style="margin:0">Kolommen: <b>Competitie</b>, <b>Voornaam</b>, <b>Achternaam</b>, <b>Handicap</b>, <b>Team</b> (een kolom <b>Naam</b> met de volledige naam mag ook). Per competitienaam in het bestand: bestaat de competitie al, dan worden de spelers van de genoemde teams vervangen; anders wordt ze aangemaakt. Het bestand wordt alleen in deze browser gelezen; volledige namen worden niet opgeslagen.</p>
+    <div class="actions" style="padding:0"><label class="btn ghost" for="imp-sheet" style="display:inline-block">Bestand kiezen…</label><input type="file" id="imp-sheet" accept=".xlsx,.xls,.csv,.txt,text/csv" hidden></div>
+    <div id="imp-prev" style="display:grid;gap:10px">${impPreview()}</div></div></section>`;
   h+=`<h2>Nieuwe competitie</h2><section class="card"><div class="form">
     <label class="f">Naam van de competitie<input type="text" data-nc="name" value="${esc(ui.nc.name)}" placeholder="Bijv. Wintercompetitie Heren 2026-2027" autocomplete="off"></label>
     <label class="f">Teams en spelers<textarea data-nc="text" rows="12" spellcheck="false" autocomplete="off" placeholder="Heren 1:&#10;Rob Hendriks 2,1&#10;Andre Kuipers 7,2 (c)&#10;&#10;Heren 2:&#10;Pascal de Nijs 5,4&#10;…">${esc(ui.nc.text)}</textarea></label>
@@ -691,6 +695,7 @@ document.addEventListener("input",e=>{
   if(d.nc){ui.nc[d.nc]=el.value; if(d.nc==="text"){const p=$("#nc-prev");if(p)p.innerHTML=ncPreview();} if(ui.ncErr){ui.ncErr=ncError();const e2=$("#nc-err");if(e2)e2.textContent=ui.ncErr;} return;}
   if(d.cc){ui.cc[d.cc]=el.value;return;}
   if(d.rn){ui.rn=el.value;return;}
+  if(d.impc&&ui.imp){const [i,f]=d.impc.split("|");ui.imp.comps[+i][f]=el.value;return;}
   if(d.paste&&ui.paste){ui.paste.text=el.value;const p=$("#paste-prev");if(p)p.innerHTML=pastePreview();}
 });
 document.addEventListener("click",async e=>{
@@ -735,6 +740,8 @@ document.addEventListener("click",async e=>{
         await loadList();toast("Competitie verwijderd.");if(d.delcok===compId){switchComp(comps.length?comps[0].id:null);ui.tab="beheer";render();}else render();}
       catch(err){toast(codeErr(err));}return;}
     if(d.create){await createComp();return;}
+    if(d.impcancel){ui.imp=null;render();return;}
+    if(d.impgo){await runImport();return;}
   }
   if(!canWrite) return;
   if(d.impno){ui.importDocs=null;render();return;}
@@ -762,6 +769,121 @@ document.addEventListener("click",async e=>{
   if(d.addteam){if(anyResults()||NT()>=MAXT)return;const c=S.cfg;c.teams.push({name:"Team "+(c.teams.length+1),rule:"vrij"});c.sched=[];setCfg(c);saveCfg();render();return;}
   if(d.delteam){if(anyResults()||NT()<=2)return;const c=S.cfg;const n=c.teams.length;c.teams.pop();c.sched=[];setCfg(c);saveCfg();S.rosters[n]=[];saveRoster(n);render();toast("Laatste team verwijderd.");return;}
 });
+
+/* ---------- importeren uit Excel of CSV (alles gebeurt in deze browser) ---------- */
+function parseCsv(text){
+  const lines=String(text||"").replace(/^﻿/,"").split(/\r?\n/).filter(l=>l.trim());
+  if(!lines.length) return [];
+  const h=lines[0], cnt=c=>h.split(c).length-1;
+  const sep=[";",",","\t"].sort((x,y)=>cnt(y)-cnt(x))[0];
+  return lines.map(l=>{const out=[];let cur="",q=false;
+    for(let i=0;i<l.length;i++){const ch=l[i];
+      if(q){if(ch==='"'){if(l[i+1]==='"'){cur+='"';i++;}else q=false;}else cur+=ch;}
+      else if(ch==='"')q=true; else if(ch===sep){out.push(cur);cur="";} else cur+=ch;}
+    out.push(cur);return out.map(x=>x.trim());});
+}
+let xlsxLoading=null;
+function loadXlsxLib(){
+  if(window.XLSX) return Promise.resolve();
+  return xlsxLoading||(xlsxLoading=new Promise((res,rej)=>{const sc=document.createElement("script");
+    sc.src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";sc.onload=()=>res();sc.onerror=()=>{xlsxLoading=null;rej();};document.head.appendChild(sc);}));
+}
+async function readSheet(file){
+  if(/\.(xlsx|xlsm|xls)$/i.test(file.name)){
+    await loadXlsxLib(); const wb=XLSX.read(await file.arrayBuffer(),{type:"array"});
+    const ws=wb.Sheets[wb.SheetNames[0]]; return XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:""}).map(r=>r.map(x=>String(x==null?"":x).trim()));
+  }
+  return parseCsv(await file.text());
+}
+// Kolommen op naam herkennen; zonder kopregel: competitie, voornaam, achternaam, handicap, team
+function rowsToComps(rows){
+  rows=rows.filter(r=>r.some(x=>x));
+  if(!rows.length) return {comps:[],err:"Het bestand is leeg."};
+  const hd=rows[0].map(x=>x.toLowerCase());
+  const find=(...ks)=>hd.findIndex(x=>ks.some(k=>x===k||x.startsWith(k)));
+  let col={comp:find("competitie"),first:find("voornaam"),tv:find("tussenvoegsel"),last:find("achternaam"),name:find("naam","speler"),hcp:find("handicap","hcp","playing"),team:find("team")};
+  let start=1;
+  if(col.comp<0&&col.team<0&&col.hcp<0){col={comp:0,first:1,tv:-1,last:2,name:-1,hcp:3,team:4};start=0;}
+  if(col.comp<0) col.comp=0;
+  if(col.first>=0&&col.name===col.first) col.name=-1;
+  if(col.team<0) return {comps:[],err:"Geen kolom Team gevonden."};
+  if(col.first<0&&col.name<0) return {comps:[],err:"Geen kolom met namen gevonden (Voornaam en Achternaam, of Naam)."};
+  const map=new Map(), warn=[];
+  rows.slice(start).forEach((r,i)=>{
+    const comp=(r[col.comp]||"").trim(), team=(r[col.team]||"").trim();
+    const raw=col.first>=0?[r[col.first],col.tv>=0?r[col.tv]:"",col.last>=0?r[col.last]:""].map(x=>(x||"").trim()).filter(Boolean).join(" "):(r[col.name]||"").trim();
+    if(!comp||!team||!raw){warn.push(`Regel ${i+start+1} overgeslagen: competitie, team of naam ontbreekt.`);return;}
+    const key=comp.toLowerCase(); if(!map.has(key)) map.set(key,{name:comp,teams:new Map()});
+    const c=map.get(key), tk=team.toLowerCase(); if(!c.teams.has(tk)) c.teams.set(tk,{name:team,players:[]});
+    const hv=col.hcp>=0?toHcp(r[col.hcp]):null;
+    c.teams.get(tk).players.push({raw,hcp:hv});
+  });
+  const comps=[...map.values()].map(c=>{const ex=comps0().find(x=>x.name.trim().toLowerCase()===c.name.toLowerCase());
+    return {name:c.name,existing:ex?ex.id:null,teams:[...c.teams.values()],edit:"",view:""};});
+  return {comps,err:"",warn};
+}
+const comps0=()=>comps;
+function impPreview(){
+  const im=ui.imp; if(!im) return "";
+  let h=`<p class="note" style="margin:0"><b>${esc(im.file)}</b>: ${im.comps.length} competitie(s).</p>`;
+  if(im.warn&&im.warn.length) h+=`<p class="note warn" style="margin:0">${im.warn.slice(0,5).map(esc).join("<br>")}${im.warn.length>5?"<br>…":""}</p>`;
+  im.comps.forEach((c,i)=>{
+    const teams=anonTeams(c.teams,[]);
+    h+=`<div class="pv" style="gap:8px;background:var(--surface)"><div><b>${esc(c.name)}</b> · ${c.teams.length} teams · ${c.existing?`<span class="pill gold">bestaat: spelers van deze teams worden vervangen</span>`:`<span class="pill ok">nieuw</span>`}</div>`+previewHtml(teams,{teams:!c.existing});
+    if(!c.existing) h+=`<div class="row"><label class="f">Invoercode (minstens 8 tekens)<input type="text" data-impc="${i}|edit" value="${esc(c.edit)}" autocomplete="off" spellcheck="false"></label><label class="f">Kijkcode (optioneel)<input type="text" data-impc="${i}|view" value="${esc(c.view)}" autocomplete="off" spellcheck="false" placeholder="Leeg = iedereen met de link kijkt mee"></label></div>`;
+    h+=`</div>`;
+  });
+  h+=`<div class="actions" style="padding:0;align-items:center"><button class="btn" data-impgo="1" ${ui.busy?"disabled":""}>Importeren</button><button class="btn ghost" data-impcancel="1">Annuleren</button><span class="note warn" style="margin:0">${esc(im.err||"")}</span></div>`;
+  return h;
+}
+async function runImport(){
+  const im=ui.imp; if(!im) return;
+  for(const c of im.comps){ if(!c.existing){
+    if(c.teams.length<2||c.teams.length>MAXT){im.err=`${c.name}: een competitie heeft 2 tot ${MAXT} teams.`;render();return;}
+    if(c.edit.trim().length<8){im.err=`${c.name}: de invoercode moet minstens 8 tekens hebben.`;render();return;}
+    const v=c.view.trim(); if(v&&(v.length<6||v===c.edit.trim())){im.err=`${c.name}: kijkcode minstens 6 tekens en anders dan de invoercode.`;render();return;} } }
+  ui.busy=true;im.err="";render();
+  const done=[],fail=[]; let touched=false;
+  for(const c of im.comps){
+    try{
+      if(!c.existing){
+        const teams=anonTeams(c.teams,[]);
+        const cfgN=normCfg({name:c.name,teams:teams.map(t=>({name:t.name,rule:"vrij"}))});
+        const docs={"config/main":cfgN};
+        teams.forEach((t,i)=>{docs["rosters/t"+(i+1)]={players:t.players.slice(0,MAXP).map(p=>({id:rid(),name:p.name,hcp:p.hcp==null?"":p.hcp}))};});
+        await rpc("tc_admin",{p_code:store.admin,p_action:"create",p_args:{docs,edit:c.edit.trim(),view:c.view.trim()}});
+        done.push(c.name+" aangemaakt");
+      } else {
+        const id=c.existing, st=await rpc("tc_state",{p_comp:id,p_code:store.admin,p_since:-1}), docs=st.docs||{};
+        const cf=normCfg(docs["config/main"]);
+        const hasRes=Object.entries(docs).some(([k,v])=>k.startsWith("results/")&&Object.values(v||{}).some(x=>x!==""&&x!=null));
+        const idx=c.teams.map(t=>cf.teams.findIndex(x=>x.name.trim().toLowerCase()===t.name.toLowerCase()));
+        const nNew=idx.filter(x=>x<0).length;
+        if(nNew&&hasRes) throw {msg:"er staan al uitslagen, dus er kunnen geen teams bij"};
+        if(cf.teams.length+nNew>MAXT) throw {msg:`meer dan ${MAXT} teams`};
+        c.teams.forEach((t,k)=>{if(idx[k]<0){cf.teams.push({name:t.name,rule:"vrij"});idx[k]=cf.teams.length-1;}});
+        const keepNames=[]; cf.teams.forEach((_,i)=>{if(!idx.includes(i))(((docs["rosters/t"+(i+1)]||{}).players)||[]).forEach(p=>keepNames.push(p.name));});
+        const an=anonTeams(c.teams,keepNames);
+        if(nNew){cf.sched=[];const c2=normCfg(cf);await rpc("tc_put",{p_comp:id,p_code:store.admin,p_path:"config/main",p_data:c2});}
+        for(let k=0;k<an.length;k++){
+          const t=idx[k]+1, old=((docs["rosters/t"+t]||{}).players)||[];
+          const players=an[k].players.slice(0,MAXP).map(p=>{const o=old.find(x=>x.name===p.name);return {id:o?o.id:rid(),name:p.name,hcp:p.hcp==null?"":p.hcp};});
+          await rpc("tc_put",{p_comp:id,p_code:store.admin,p_path:"rosters/t"+t,p_data:{players}});
+          const ids=new Set(players.map(p=>p.id));
+          for(const [path,v] of Object.entries(docs)){ if(!path.startsWith(`lineups/t${t}r`)) continue;
+            const as=Object.assign({},(v&&v.assign)||{}); let ch=false; for(const pid of Object.keys(as)) if(!ids.has(pid)){delete as[pid];ch=true;}
+            if(ch) await rpc("tc_put",{p_comp:id,p_code:store.admin,p_path:path,p_data:{assign:as}}); }
+        }
+        if(id===compId) touched=true;
+        done.push(`${c.name}: spelers van ${an.length} team(s) vervangen`+(nNew?`, ${nNew} team(s) toegevoegd`:""));
+      }
+    }catch(err){fail.push(`${c.name}: ${err&&err.msg?err.msg:codeErr(err)}`);}
+  }
+  ui.busy=false; await loadList();
+  if(fail.length){im.err="Niet gelukt: "+fail.join("; ");render();toast(done.length?done.join(". ")+".":"Import mislukt.");}
+  else{ui.imp=null;render();toast(done.join(". ")+".");}
+  if(touched){version=-1;poll();}
+}
 function codeErr(err){const c=err&&err.code;return ({invoercode_te_kort:"De invoercode moet minstens 8 tekens hebben.",kijkcode_te_kort:"De kijkcode moet minstens 6 tekens hebben (of leeg laten).",
   codes_gelijk:"Invoercode en kijkcode moeten verschillen.",zelfde_als_beheercode:"Gebruik voor de competitie een andere code dan de beheercode.",toegang_geweigerd:"Geweigerd: de beheercode klopt niet (meer).",
   ongeldige_gegevens:"De gegevens zijn ongeldig.",te_veel_competities:"Maximaal 50 competities.",onbekende_competitie:"Deze competitie bestaat niet meer."})[c]||"Opslaan mislukt. Controleer je internetverbinding.";}
@@ -790,7 +912,10 @@ async function createComp(){
 document.addEventListener("change",e=>{
   const el=e.target, d=el.dataset;
   if(el.id==="compsel"){ui.paste=null;switchComp(el.value);return;}
-  if(d.nc||d.cc||d.paste||d.rn) return;
+  if(d.nc||d.cc||d.paste||d.rn||d.impc) return;
+  if(el.id==="imp-sheet"){const f=el.files&&el.files[0]; el.value=""; if(!f) return;
+    readSheet(f).then(rows=>{const r=rowsToComps(rows); if(r.err){toast(r.err);return;} ui.imp={file:f.name,comps:r.comps,warn:r.warn,err:""};render();})
+      .catch(()=>toast("Het bestand kon niet worden gelezen."));return;}
   if(el.id==="imp-file"){const f=el.files&&el.files[0]; if(!f) return; f.text().then(t=>{let j;try{j=JSON.parse(t);}catch(_){toast("Dit is geen geldig exportbestand.");return;}
     const docs=j&&j.docs?j.docs:j; if(!docs||typeof docs!=="object"||!docs["config/main"]){toast("Dit is geen exportbestand van de Training Competitie.");return;}
     ui.importDocs=docs;ui.importName=f.name;render();});el.value="";return;}
