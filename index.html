@@ -444,7 +444,7 @@ function sessBar(s){
     if(canWrite) h+=ui.confirmEnd===s?`<span>${n<tot3?`Nog ${tot3-n} partij(en) zonder uitslag. `:""}Afronden?<button class="btn" data-send="${s}">Ja, afronden</button><button class="btn ghost" data-sendno="1">Nee</button></span>`:`<button class="btn" data-sendask="${s}">Speeldag afronden</button>`;
   } else h+=`<span><b>Afgerond</b> op ${fmtDate(isoDate(x.end))} ${hhmm(x.end)}. De uitslagen staan vast.</span>${canWrite?`<button class="linkbtn" data-sreopen="${s}">heropenen</button>`:""}`;
   h+=`</div>`;
-  if(st==="klaar"&&s===PLAN.nSess&&isAdmin) h+=`<div class="sbar"><span><b>De competitie is klaar.</b> Dezelfde competitie nog een keer spelen?</span><button class="btn" data-nrgo="1">Nieuwe competitieronde</button></div>`;
+  if(canWrite&&cfg().sessions.every(x=>x.end)) h+=`<div class="sbar"><span><b>De competitie is klaar.</b> Dezelfde competitie nog een keer spelen?</span><button class="btn" data-nrgo="1">Nieuwe competitieronde</button></div>`;
   return h;
 }
 function vUitslagen(){
@@ -533,7 +533,7 @@ function vStand(){
   h+=`<h2>Eindrangschikking</h2><div class="card tbl-wrap"><table><tbody>`;
   for(const [p,t,lab] of finalRanking(st)) h+=`<tr><td class="rank">${p}</td><td><b>${t?esc(tname(t)):"<span class='cap'>nog niet bekend</span>"}</b></td><td class="cap">${lab}</td></tr>`;
   h+=`</tbody></table></div>`;
-  if(isAdmin){
+  if(canWrite){
     h+=`<h2>Nieuwe competitieronde</h2><section class="card"><div class="form">`;
     if(!ui.newRound) h+=`<p class="note" style="margin:0">Speel dezelfde competitie nog een keer: teams, spelers, regels en tijden blijven, de uitslagen en opstellingen beginnen opnieuw. De huidige stand en uitslagen worden bewaard en blijven hieronder zichtbaar. Link en codes blijven hetzelfde.</p><div class="actions" style="padding:0"><button class="btn ghost" data-nrgo="1">Nieuwe competitieronde starten…</button></div>`;
     else h+=`<p class="note" style="margin:0"><b>Weet je het zeker?</b> Competitieronde ${cfg().round||1} wordt afgesloten en bewaard; de uitslagen en opstellingen worden leeggemaakt en alle speeldagen beginnen opnieuw (zonder datum).${st.complete?"":" Let op: de poule is nog niet compleet."}</p><div class="actions" style="padding:0"><button class="btn" data-nrok="1" ${ui.busy?"disabled":""}>Ja, start competitieronde ${(cfg().round||1)+1}</button><button class="btn ghost" data-nrno="1">Annuleren</button></div>`;
@@ -549,7 +549,7 @@ function vStand(){
   return h;
 }
 async function newRound(){
-  if(!isAdmin||!S.cfg) return;
+  if(!canWrite||!S.cfg) return;
   const st=standings(), c=normCfg(S.cfg), n=c.round||1;
   const ds=[...new Set(c.sessions.map(x=>x.date).filter(Boolean))].sort();
   const arch={round:n,name:c.name,archivedAt:new Date().toISOString(),period:ds.length?(ds.length>1?fmtDate(ds[0])+" t/m "+fmtDate(ds[ds.length-1]):fmtDate(ds[0])):"",
@@ -801,12 +801,12 @@ document.addEventListener("click",async e=>{
       catch(err){toast(codeErr(err));}return;}
     if(d.create){await createComp();return;}
     if(d.impcancel){ui.imp=null;render();return;}
-    if(d.nrgo){ui.newRound=true;ui.tab="stand";render();setTimeout(()=>{const el=document.querySelector("[data-nrok]");if(el)el.scrollIntoView({block:"center"});},0);return;}
-    if(d.nrno){ui.newRound=false;render();return;}
-    if(d.nrok){await newRound();return;}
     if(d.newround){if(d.newround!==compId)switchComp(d.newround);ui.tab="stand";ui.newRound=true;render();return;}
     if(d.impgo){await runImport();return;}
   }
+  if(canWrite&&d.nrgo){ui.newRound=true;ui.tab="stand";render();setTimeout(()=>{const el=document.querySelector("[data-nrok]");if(el)el.scrollIntoView({block:"center"});},0);return;}
+  if(canWrite&&d.nrno){ui.newRound=false;render();return;}
+  if(canWrite&&d.nrok){await newRound();return;}
   if(d.sstart&&!canWrite){ui.login=true;ui.badCode=false;render();return;}
   if(!canWrite) return;
   if(d.impno){ui.importDocs=null;render();return;}
