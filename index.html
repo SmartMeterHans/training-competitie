@@ -363,7 +363,7 @@ function lineup(t,s){
   }
   return res;
 }
-function duoRes(m,d){const r=S.results[`m${m}d${d}`]||{};const l=num(r.l),rr=num(r.r);
+function duoRes(m,d){const r=S.results[`m${m}d${d}`]||{};let l=num(r.l),rr=num(r.r);if(l!=null&&rr==null)rr=0;if(rr!=null&&l==null)l=0;
   return {l,r:rr,done:l!=null&&rr!=null,pl:l!=null&&rr!=null?(l>rr?1:l===rr?.5:0):null};}
 function tot(m){let pl=0,pr=0,hl=0,hr=0,n=0;for(let d=1;d<=3;d++){const x=duoRes(m,d);if(x.done){n++;pl+=x.pl;pr+=1-x.pl;hl+=x.l;hr+=x.r;}}return {pl,pr,hl,hr,n};}
 function standings(){
