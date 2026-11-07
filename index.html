@@ -221,23 +221,39 @@ function anonNames(raws,taken){
 const looksFull=n=>{const x=splitName(n);return x.fixed==null;};
 function toHcp(s){const t=String(s).trim();const plus=t.startsWith("+");const v=num(t.replace("+",""));if(v==null||v>54)return null;return plus?-v:v;}
 // Tekst met teams en spelers lezen. Kopregel: eindigt op ":" of begint met "Team:". Spelerregel: naam, daarna eventueel handicap.
+// Kopregel (teamnaam): eindigt op ":" of begint met "Team:", of een regel zonder handicap na een lege regel
+// (of bovenaan) met daaronder spelers. Staat er nergens een handicap, dan is elke regel een teamnaam.
 function parseTeams(text,allowTeams){
-  const teams=[]; let cur=null;
+  const L=[]; let blank=true;
   for(const raw of String(text||"").split(/\r?\n/)){
-    const t=raw.replace(/ /g," ").trim(); if(!t) continue;
-    let hm=t.match(/^team\s*:\s*(.+)$/i)||(/:\s*$/.test(t)&&!t.includes("\t")?[0,t.replace(/:\s*$/,"")]:null);
-    if(hm){ if(allowTeams){cur={name:hm[1].trim(),players:[]};teams.push(cur);} continue; }
+    const t=raw.replace(/\u00a0/g," ").trim(); if(!t){blank=true;continue;}
+    const hm=t.match(/^team\s*:\s*(.+)$/i)||(/:\s*$/.test(t)&&!t.includes("\t")?[0,t.replace(/:\s*$/,"")]:null);
     let name="",hcp=null,suffix="";
-    const cells=t.includes("\t")?t.split("\t"):t.includes(";")?t.split(";"):null;
-    if(cells){const c=cells.map(x=>x.trim()).filter(Boolean); name=c[0]||""; for(const x of c.slice(1)){if(hcp==null&&/^\+?-?\d{1,2}([.,]\d+)?$/.test(x))hcp=toHcp(x);else if(SUFRE.test(" "+x))suffix=x;}}
-    else{let s=t;for(let k=0;k<3;k++){let m;
-      if((m=s.match(/\s+(\([^)]*\)|©)$/))){suffix=m[1];s=s.slice(0,m.index);}
-      else if(hcp==null&&(m=s.match(/\s+(\+?-?\d{1,2}(?:[.,]\d+)?)$/))){hcp=toHcp(m[1]);s=s.slice(0,m.index);}
-      else break;} name=s.trim();}
-    if(!name) continue;
-    if(!cur){cur={name:"",players:[]};teams.push(cur);}
-    cur.players.push({raw:name+(suffix?" "+suffix:""),hcp});
+    if(!hm){
+      const cells=t.includes("\t")?t.split("\t"):t.includes(";")?t.split(";"):null;
+      if(cells){const c=cells.map(x=>x.trim()).filter(Boolean); name=c[0]||""; for(const x of c.slice(1)){if(hcp==null&&/^\+?-?\d{1,2}([.,]\d+)?$/.test(x))hcp=toHcp(x);else if(SUFRE.test(" "+x))suffix=x;}}
+      else{let s=t;for(let k=0;k<3;k++){let m;
+        if((m=s.match(/\s+(\([^)]*\)|©)$/))){suffix=m[1];s=s.slice(0,m.index);}
+        else if(hcp==null&&(m=s.match(/\s+(\+?-?\d{1,2}(?:[.,]\d+)?)$/))){hcp=toHcp(m[1]);s=s.slice(0,m.index);}
+        else break;} name=s.trim();
+        // "Heren 1", "Team 3": één woord plus een heel getal is een teamnaam, geen speler met handicap
+        if(allowTeams&&hcp!=null&&!/\s/.test(name)&&!/[.,+]/.test(t.replace(name,""))){name=t;hcp=null;suffix="";}}
+    }
+    L.push({head:hm?hm[1].trim():null,name,hcp,suffix,blank,raw:t}); blank=false;
   }
+  const teams=[]; let cur=null;
+  const anyHcp=L.some(x=>x.hcp!=null), anyHead=L.some(x=>x.head!=null);
+  L.forEach((x,i)=>{
+    let head=x.head;
+    if(allowTeams&&head==null&&!x.suffix){
+      if(!anyHcp&&!anyHead) head=x.raw;
+      else if(x.hcp==null&&x.blank){const nx=L[i+1]; if(nx&&nx.head==null&&nx.hcp!=null&&!nx.blank) head=x.raw;}
+    }
+    if(head!=null){ if(allowTeams){cur={name:head,players:[]};teams.push(cur);} return; }
+    if(!x.name) return;
+    if(!cur){cur={name:"",players:[]};teams.push(cur);}
+    cur.players.push({raw:x.name+(x.suffix?" "+x.suffix:""),hcp:x.hcp});
+  });
   teams.forEach((t,i)=>{if(!t.name)t.name="Team "+(i+1);});
   return teams;
 }
@@ -565,7 +581,7 @@ function vData(){
 }
 function ncPreview(){
   const parsed=parseTeams(ui.nc.text,true);
-  return previewHtml(anonTeams(parsed,[]),{teams:true});
+  return (parsed.length?`<p class="note" style="margin:0 0 6px"><b>${parsed.length} team${parsed.length===1?"":"s"}</b> gevonden.</p>`:"")+previewHtml(anonTeams(parsed,[]),{teams:true});
 }
 function vBeheer(){
   const link=id=>location.origin+location.pathname+"?c="+encodeURIComponent(id);
@@ -595,7 +611,7 @@ function vBeheer(){
     <div id="nc-prev">${ncPreview()}</div>
     <div class="row"><label class="f">Invoercode voor de captains (minstens 8 tekens)<input type="text" data-nc="edit" value="${esc(ui.nc.edit)}" autocomplete="off" spellcheck="false"></label>
     <label class="f">Kijkcode (optioneel, minstens 6 tekens)<input type="text" data-nc="view" value="${esc(ui.nc.view)}" autocomplete="off" spellcheck="false" placeholder="Leeg = iedereen met de link kijkt mee"></label></div>
-    <div class="actions" style="padding:0"><button class="btn" data-create="1" ${busy}>Competitie aanmaken</button></div></div></section>`;
+    <div class="actions" style="padding:0;align-items:center"><button class="btn" data-create="1" ${busy}>Competitie aanmaken</button><span id="nc-err" class="note warn" style="margin:0">${esc(ui.ncErr||"")}</span></div></div></section>`;
   h+=`<p class="note" style="margin-top:12px">Na het aanmaken stel je bij <b>Instellingen</b> de speeldata, tijden en opstellingsregels in. De beheercode wijzig je in Supabase (SQL Editor) met <code>select tc_private.set_admin_code('…');</code></p>`;
   return h;
 }
@@ -670,7 +686,7 @@ document.addEventListener("submit",e=>{
 });
 document.addEventListener("input",e=>{
   const el=e.target,d=el.dataset;
-  if(d.nc){ui.nc[d.nc]=el.value; if(d.nc==="text"){const p=$("#nc-prev");if(p)p.innerHTML=ncPreview();} return;}
+  if(d.nc){ui.nc[d.nc]=el.value; if(d.nc==="text"){const p=$("#nc-prev");if(p)p.innerHTML=ncPreview();} if(ui.ncErr){ui.ncErr=ncError();const e2=$("#nc-err");if(e2)e2.textContent=ui.ncErr;} return;}
   if(d.cc){ui.cc[d.cc]=el.value;return;}
   if(d.paste&&ui.paste){ui.paste.text=el.value;const p=$("#paste-prev");if(p)p.innerHTML=pastePreview();}
 });
@@ -735,22 +751,27 @@ document.addEventListener("click",async e=>{
 function codeErr(err){const c=err&&err.code;return ({invoercode_te_kort:"De invoercode moet minstens 8 tekens hebben.",kijkcode_te_kort:"De kijkcode moet minstens 6 tekens hebben (of leeg laten).",
   codes_gelijk:"Invoercode en kijkcode moeten verschillen.",zelfde_als_beheercode:"Gebruik voor de competitie een andere code dan de beheercode.",toegang_geweigerd:"Geweigerd: de beheercode klopt niet (meer).",
   ongeldige_gegevens:"De gegevens zijn ongeldig.",te_veel_competities:"Maximaal 50 competities.",onbekende_competitie:"Deze competitie bestaat niet meer."})[c]||"Opslaan mislukt. Controleer je internetverbinding.";}
+function ncError(){
+  const name=ui.nc.name.trim(), n=parseTeams(ui.nc.text,true).length, edit=ui.nc.edit.trim(), view=ui.nc.view.trim();
+  if(!name) return "Vul een naam voor de competitie in.";
+  if(n<2||n>MAXT) return `Een competitie heeft 2 tot ${MAXT} teams; nu gevonden: ${n}.`;
+  if(edit.length<8) return "De invoercode moet minstens 8 tekens hebben.";
+  if(view&&view.length<6) return "De kijkcode moet minstens 6 tekens hebben (of leeg laten).";
+  if(view&&view===edit) return "Invoercode en kijkcode moeten verschillen.";
+  return "";
+}
 async function createComp(){
   const name=ui.nc.name.trim(), parsed=parseTeams(ui.nc.text,true), edit=ui.nc.edit.trim(), view=ui.nc.view.trim();
-  if(!name){toast("Vul een naam voor de competitie in.");return;}
-  if(parsed.length<2||parsed.length>MAXT){toast(`Een competitie heeft 2 tot ${MAXT} teams (nu ${parsed.length}).`);return;}
-  if(edit.length<8){toast("De invoercode moet minstens 8 tekens hebben.");return;}
-  if(view&&view.length<6){toast("De kijkcode moet minstens 6 tekens hebben (of leeg laten).");return;}
-  if(view&&view===edit){toast("Invoercode en kijkcode moeten verschillen.");return;}
+  const ve=ncError(); if(ve){ui.ncErr=ve;render();toast(ve);return;}
   const teams=anonTeams(parsed,[]);
   const c=normCfg({name,teams:teams.map(t=>({name:t.name,rule:"vrij"}))});
   const docs={"config/main":c};
   teams.forEach((t,i)=>{docs["rosters/t"+(i+1)]={players:t.players.slice(0,MAXP).map(p=>({id:rid(),name:p.name,hcp:p.hcp==null?"":p.hcp}))};});
   ui.busy=true;render();
   try{const r=await rpc("tc_admin",{p_code:store.admin,p_action:"create",p_args:{docs,edit,view}});
-    ui.nc={name:"",text:"",edit:"",view:""};ui.busy=false;await loadList();ui.tab="instellingen";switchComp(r.id);
+    ui.nc={name:"",text:"",edit:"",view:""};ui.ncErr="";ui.busy=false;await loadList();ui.tab="instellingen";switchComp(r.id);
     toast("Competitie aangemaakt. Vul nu de speeldata en tijden in.");}
-  catch(err){ui.busy=false;render();toast(codeErr(err));}
+  catch(err){ui.busy=false;ui.ncErr="Niet aangemaakt: "+codeErr(err);render();toast(ui.ncErr);}
 }
 document.addEventListener("change",e=>{
   const el=e.target, d=el.dataset;
